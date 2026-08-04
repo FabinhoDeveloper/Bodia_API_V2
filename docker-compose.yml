@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bodia
+      POSTGRES_PASSWORD: bodia
+      POSTGRES_DB: bodia
+    ports:
+      - "5432:5432"
+    volumes:
+      - bodia_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  bodia_postgres_data:
