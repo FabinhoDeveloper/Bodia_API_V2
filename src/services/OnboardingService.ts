@@ -1,4 +1,5 @@
-import { PerfilInput } from "./CalculoService";
+import ValidationError from "../errors/ValidationError";
+import CalculoService, { PerfilInput } from "./CalculoService";
 
 export interface ContaInput {
     nome: string;
@@ -18,17 +19,20 @@ export interface CadastroInput {
 }
 
 export default class OnboardingService {
-    receberCadastro(cadastro: CadastroInput): { recebido: true } {
-        const { senha, ...contaSemSenha } = cadastro.conta;
+    private readonly calculoService;
 
-        console.log(
-            "[onboarding] payload recebido:",
-            JSON.stringify(
-                { conta: { ...contaSemSenha, senha: "***" }, perfil: cadastro.perfil },
-                null,
-                2,
-            ),
-        );
+    constructor(calculoService: CalculoService) {
+        this.calculoService = calculoService;
+    }
+
+    receberCadastro(cadastro: CadastroInput): { recebido: true } {
+        if (!cadastro.perfil) {
+            throw new ValidationError("perfil é obrigatório para gerar o plano");
+        }
+
+        const resultado = this.calculoService.calcular(cadastro.perfil);
+
+        console.log("[onboarding] plano calculado:", JSON.stringify(resultado, null, 2));
 
         return { recebido: true };
     }

@@ -110,7 +110,7 @@ const userRepository = new UserRepository(prismaClient);
 - **Um arquivo por classe**, nome do arquivo = nome da classe (`PascalCase.ts`), `export default class`.
 - Nenhuma camada pula a de baixo (controller nunca chama repository direto, service nunca importa Express/Prisma).
 - Sem container de DI — a composição é explícita e manual no arquivo de rota.
-- Erros: lançar `Error` (ou subclasse) na Service; captura genérica fica no middleware global (`src/middlewares/errorHandler.ts`). Não fazer `try/catch` espalhado no controller.
+- Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/errorHandler.ts`) captura. Para entrada inválida, lançar `ValidationError` (`src/errors/ValidationError.ts`), que o middleware traduz em **400** com a mensagem do erro; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
 
 ## Testes (`tests/`)
@@ -137,6 +137,8 @@ backend/
     controllers/
     services/
     repositories/
+    errors/
+      ValidationError.ts  # erro de entrada inválida -> 400 no errorHandler
     routes/
       index.ts            # agrega os routers de recurso, montado em /api
     middlewares/
@@ -174,16 +176,19 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 
 `src/services/CalculoService.ts` já implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/CalculoService.test.ts`.
 
+Quem o consome é o `OnboardingService`, que o recebe por construtor (`new OnboardingService(new CalculoService())`, composto em `routes/onboarding.routes.ts`). Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM, quando entrar, só redige em cima destes valores — nunca calcula.
+
 ## Endpoints
 
 | Método | Rota | O que faz |
 |---|---|---|
 | `GET` | `/api/health` | Health check — confirma que a API está de pé. |
-| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app (etapa de integração: só imprime o payload no console, com a senha mascarada, e responde `{ recebido: true }`). Ainda **sem validação, sem persistência e sem cálculo** — ligar o `CalculoService` aqui é a próxima etapa. |
+| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app, passa o `perfil` pelo `CalculoService` e **imprime o plano calculado no console** (é o contexto numérico que alimentará o prompt do LLM). Responde `{ recebido: true }` — o resultado ainda não vai na resposta. Devolve **400** se o `perfil` faltar ou for inválido. Ainda **sem persistência** e sem validação campo a campo (o `req.body` é convertido por cast). |
 
 ## Próximos passos (fora do escopo desta etapa)
 
-- Validação do payload de `POST /api/onboarding` e retorno do plano calculado pelo `CalculoService`.
+- Validação campo a campo do payload e retorno do plano calculado na resposta HTTP (hoje ele só vai para o console).
+- RAG + LLM: recuperar a fundamentação científica e redigir o plano em cima dos números do `CalculoService`.
 - Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta) e persistência.
 - Auth real (hash de senha com bcrypt, emissão/validação de JWT, middleware de autenticação).
 - Catálogo de exercícios (para a divisão de treino sair de "estrutura numérica" para exercícios concretos).

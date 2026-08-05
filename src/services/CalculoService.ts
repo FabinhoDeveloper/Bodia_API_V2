@@ -1,3 +1,5 @@
+import ValidationError from "../errors/ValidationError";
+
 export type Sexo = "M" | "F";
 export type NivelAtividade = "sedentario" | "leve" | "moderado" | "intenso" | "atleta";
 export type NivelExperiencia = "iniciante" | "intermediario" | "avancado";
@@ -133,13 +135,13 @@ export default class CalculoService {
 
     private validarPerfil(perfil: PerfilInput): void {
         if (!Number.isInteger(perfil.diasPorSemana) || perfil.diasPorSemana < 2 || perfil.diasPorSemana > 6) {
-            throw new Error("diasPorSemana deve ser um inteiro entre 2 e 6");
+            throw new ValidationError("diasPorSemana deve ser um inteiro entre 2 e 6");
         }
         if (perfil.peso <= 0) {
-            throw new Error("peso deve ser maior que zero");
+            throw new ValidationError("peso deve ser maior que zero");
         }
         if (perfil.altura <= 0) {
-            throw new Error("altura deve ser maior que zero");
+            throw new ValidationError("altura deve ser maior que zero");
         }
     }
 
@@ -202,7 +204,7 @@ export default class CalculoService {
 
         const carboidratoKcal = caloriasAlvo - proteinaKcal - gorduraKcal;
         if (carboidratoKcal < 0) {
-            throw new Error(
+            throw new ValidationError(
                 "Meta calórica insuficiente para cobrir a proteína e a gordura mínimas calculadas",
             );
         }
