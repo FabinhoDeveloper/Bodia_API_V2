@@ -174,9 +174,16 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 
 `src/services/CalculoService.ts` já implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/CalculoService.test.ts`.
 
+## Endpoints
+
+| Método | Rota | O que faz |
+|---|---|---|
+| `GET` | `/api/health` | Health check — confirma que a API está de pé. |
+| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app (etapa de integração: só imprime o payload no console, com a senha mascarada, e responde `{ recebido: true }`). Ainda **sem validação, sem persistência e sem cálculo** — ligar o `CalculoService` aqui é a próxima etapa. |
+
 ## Próximos passos (fora do escopo desta etapa)
 
-- Rota/Controller de API para receber o perfil do app e devolver o resultado do `CalculoService`.
+- Validação do payload de `POST /api/onboarding` e retorno do plano calculado pelo `CalculoService`.
 - Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta) e persistência.
 - Auth real (hash de senha com bcrypt, emissão/validação de JWT, middleware de autenticação).
 - Catálogo de exercícios (para a divisão de treino sair de "estrutura numérica" para exercícios concretos).
