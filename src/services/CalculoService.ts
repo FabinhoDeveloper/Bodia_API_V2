@@ -15,6 +15,7 @@ export interface PerfilInput {
     nivelExperiencia: NivelExperiencia;
     objetivo: Objetivo;
     diasPorSemana: number;
+    numeroRefeicoes?: number;
 }
 
 export interface ResultadoCalculo {
@@ -41,6 +42,9 @@ export interface ResultadoCalculo {
         sessoes: { nome: string; frequenciaSemanal: number }[];
         seriesPorGrupoSemana: number;
     };
+    dieta: {
+        numeroRefeicoes: number;
+    };
 }
 
 interface Sessao {
@@ -48,6 +52,16 @@ interface Sessao {
     frequenciaSemanal: number;
 }
 
+/**
+ * Motor determinístico do BodIA — primeira camada da arquitetura híbrida
+ * descrita na fundamentação teórica. Recebe o perfil do usuário e calcula,
+ * sem nenhuma intervenção do LLM, tudo que tem número: TMB (Mifflin-St Jeor),
+ * TDEE, meta calórica por objetivo, distribuição de macronutrientes e a
+ * estrutura de treino (split, sessões, séries por grupo muscular).
+ *
+ * O resultado (ResultadoCalculo) é o que o PromptService injeta no prompt da
+ * IA — o LLM só recebe estes valores prontos, nunca recalcula nada aqui.
+ */
 export default class CalculoService {
     // escala 1,2-1,9 citada na fundamentação (Harris & Benedict, 1919; Mifflin et al., 1990)
     private static readonly FATOR_ATIVIDADE: Record<NivelAtividade, number> = {
@@ -72,6 +86,9 @@ export default class CalculoService {
     };
 
     private static readonly GORDURA_PERCENTUAL_KCAL = 0.25; // meio da faixa ISSN 20-35% (Jäger et al. 2017)
+
+    // Usado quando o app não informa quantas refeições o usuário faz por dia.
+    private static readonly REFEICOES_PADRAO = 4;
 
     // dose-resposta citada (Pelland et al., 2024) sem número fechado - faixas 8-12/12-16/16-20, usando o meio
     private static readonly SERIES_POR_GRUPO_SEMANA: Record<NivelExperiencia, number> = {
@@ -129,13 +146,22 @@ export default class CalculoService {
         const meta = this.calcularMetaCalorica(perfil.objetivo, metabolismo.tdee);
         const macros = this.calcularMacros(perfil, meta.caloriasAlvo);
         const treino = this.calcularTreino(perfil);
+        const dieta = { numeroRefeicoes: perfil.numeroRefeicoes ?? CalculoService.REFEICOES_PADRAO };
 
-        return { metabolismo, meta, macros, treino };
+        return { metabolismo, meta, macros, treino, dieta };
     }
 
     private validarPerfil(perfil: PerfilInput): void {
         if (!Number.isInteger(perfil.diasPorSemana) || perfil.diasPorSemana < 2 || perfil.diasPorSemana > 6) {
             throw new ValidationError("diasPorSemana deve ser um inteiro entre 2 e 6");
+        }
+        if (
+            perfil.numeroRefeicoes !== undefined &&
+            (!Number.isInteger(perfil.numeroRefeicoes) ||
+                perfil.numeroRefeicoes < 3 ||
+                perfil.numeroRefeicoes > 6)
+        ) {
+            throw new ValidationError("numeroRefeicoes deve ser um inteiro entre 3 e 6");
         }
         if (perfil.peso <= 0) {
             throw new ValidationError("peso deve ser maior que zero");
