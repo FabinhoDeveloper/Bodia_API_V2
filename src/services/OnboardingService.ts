@@ -1,6 +1,6 @@
 import ValidationError from "../errors/ValidationError";
 import CalculoService, { PerfilInput } from "./CalculoService";
-import LlmService from "./LlmService";
+import PlanoService from "./PlanoService";
 
 export interface ContaInput {
     nome: string;
@@ -19,13 +19,23 @@ export interface CadastroInput {
     perfil: PerfilOnboardingInput | null;
 }
 
+/**
+ * Orquestra o cadastro que chega do app (POST /api/onboarding, via
+ * OnboardingController): valida se há perfil, manda calcular o plano
+ * (CalculoService) e manda gerar treino e dieta com a IA (PlanoService).
+ *
+ * Imprime os três estágios no console — plano calculado, plano gerado pela
+ * IA e a conferência dos macros — porque, por enquanto, é assim que o
+ * resultado é observado: nada ainda é persistido nem devolvido na resposta
+ * HTTP (que continua sendo só { recebido: true }).
+ */
 export default class OnboardingService {
     private readonly calculoService;
-    private readonly llmService;
+    private readonly planoService;
 
-    constructor(calculoService: CalculoService, llmService: LlmService) {
+    constructor(calculoService: CalculoService, planoService: PlanoService) {
         this.calculoService = calculoService;
-        this.llmService = llmService;
+        this.planoService = planoService;
     }
 
     async receberCadastro(cadastro: CadastroInput): Promise<{ recebido: true }> {
@@ -37,12 +47,10 @@ export default class OnboardingService {
 
         console.log("[onboarding] plano calculado:", JSON.stringify(resultado, null, 2));
 
-        const respostaIa = await this.llmService.enviarMensagem(
-            "Confirme em uma frase curta que você recebeu esta mensagem e está pronto para, " +
-                "no futuro, gerar planos de treino e dieta a partir de dados calculados.",
-        );
+        const { plano, validacao } = await this.planoService.gerar(cadastro.perfil, resultado);
 
-        console.log("[onboarding] resposta da IA (teste de conexão):", respostaIa);
+        console.log("[onboarding] plano gerado pela IA:", JSON.stringify(plano, null, 2));
+        console.log("[onboarding] conferência dos macros:", JSON.stringify(validacao, null, 2));
 
         return { recebido: true };
     }
