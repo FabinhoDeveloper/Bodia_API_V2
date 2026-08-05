@@ -2,6 +2,10 @@ import { NextFunction, Request, Response } from "express";
 
 import OnboardingService, { CadastroInput } from "../services/OnboardingService";
 
+/**
+ * Ponte HTTP do cadastro/onboarding: lê req.body, repassa para o
+ * OnboardingService e escreve a resposta. Não tem regra de negócio.
+ */
 export default class OnboardingController {
     private readonly onboardingService;
 
