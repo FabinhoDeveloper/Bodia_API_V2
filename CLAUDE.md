@@ -12,6 +12,7 @@ Qualquer recurso novo (auth, usuário, perfil, treino, dieta...) **deve seguir e
 - **bcrypt** — hash de senha (reservado para quando existir auth)
 - **jsonwebtoken** — emissão/validação de token (reservado para quando existir auth)
 - **cors**, **dotenv** — infraestrutura básica de app
+- **Jest** (`ts-jest`) — testes unitários
 
 ## Arquitetura em camadas
 
@@ -112,6 +113,18 @@ const userRepository = new UserRepository(prismaClient);
 - Erros: lançar `Error` (ou subclasse) na Service; captura genérica fica no middleware global (`src/middlewares/errorHandler.ts`). Não fazer `try/catch` espalhado no controller.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
 
+## Testes (`tests/`)
+
+Testes ficam **fora de `src/`**, numa pasta própria `tests/` que espelha a estrutura de `src/` (ex.: `src/services/CalculoService.ts` → `tests/services/CalculoService.test.ts`). Isso mantém `src/` só com código de produção — o `tsconfig.json` principal (`rootDir: "src"`) não inclui `tests/`, então `npm run build`/`tsc --noEmit` não enxerga os testes.
+
+O Jest usa um tsconfig próprio, `tsconfig.jest.json` (estende o principal, mas com `rootDir` aberto e `include: ["src", "tests"]`), configurado em `jest.config.js` via `transform`. Isso é necessário porque o TypeScript recusa compilar um arquivo fora do `rootDir` do projeto principal.
+
+```bash
+npm test              # roda tudo em tests/**/*.test.ts
+```
+
+Convenção de teste: `describe` pelo nome da classe, `it`/`it.each` descrevendo o comportamento em português, um arquivo de teste por classe, mesmo nome (`<Nome>.test.ts`).
+
 ## Estrutura de pastas
 
 ```
@@ -131,7 +144,9 @@ backend/
       notFoundHandler.ts
     app.ts                 # cria o express app, registra middlewares/rotas
     server.ts              # bootstrap: carrega .env e sobe o listener
+  tests/                   # espelha src/, só arquivos *.test.ts
   docker-compose.yml        # Postgres local (bodia/bodia/bodia, porta 5432)
+  jest.config.js / tsconfig.jest.json
   .env / .env.example
 ```
 
@@ -153,9 +168,15 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 3. Criar `src/services/<Nome>Service.ts` (recebe o Repository, regra de negócio).
 4. Criar `src/controllers/<Nome>Controller.ts` (recebe o Service, handlers HTTP).
 5. Criar `src/routes/<nome>.routes.ts` (monta a cadeia e declara os endpoints) e registrar em `src/routes/index.ts`.
+6. Criar `tests/<camada>/<Nome>.test.ts` cobrindo o que foi adicionado.
+
+## Motor determinístico (`CalculoService`)
+
+`src/services/CalculoService.ts` já implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/CalculoService.test.ts`.
 
 ## Próximos passos (fora do escopo desta etapa)
 
-- Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta).
+- Rota/Controller de API para receber o perfil do app e devolver o resultado do `CalculoService`.
+- Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta) e persistência.
 - Auth real (hash de senha com bcrypt, emissão/validação de JWT, middleware de autenticação).
-- Motor determinístico de cálculo (TMB, TDEE, macros, volume/split de treino).
+- Catálogo de exercícios (para a divisão de treino sair de "estrutura numérica" para exercícios concretos).
