@@ -1,6 +1,6 @@
 # BodIA — Backend
 
-API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), autenticação futura com **bcrypt** (hash de senha) e **jsonwebtoken** (sessão). Hoje a API só tem a estrutura pronta e um endpoint de health check — **nenhuma regra de negócio (auth, usuários, cálculo de plano etc.) foi implementada ainda**. Isso é intencional: primeiro o esqueleto, depois as features.
+API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), autenticação futura com **bcrypt** (hash de senha) e **jsonwebtoken** (sessão). Hoje a API recebe o cadastro do app, calcula o plano no motor determinístico (`CalculoService`) e já conversa com o LLM (`LlmService`) — mas **ainda não há auth, persistência nem o prompt real da IA**.
 
 Qualquer recurso novo (auth, usuário, perfil, treino, dieta...) **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
 
@@ -13,6 +13,7 @@ Qualquer recurso novo (auth, usuário, perfil, treino, dieta...) **deve seguir e
 - **jsonwebtoken** — emissão/validação de token (reservado para quando existir auth)
 - **cors**, **dotenv** — infraestrutura básica de app
 - **Jest** (`ts-jest`) — testes unitários
+- **`openai` SDK** apontado para a **DeepSeek** (`deepseek-v4-pro`) — a API da DeepSeek é compatível com a interface Chat Completions da OpenAI, então o SDK oficial é reaproveitado só trocando a `baseURL`
 
 ## Arquitetura em camadas
 
@@ -112,6 +113,8 @@ const userRepository = new UserRepository(prismaClient);
 - Sem container de DI — a composição é explícita e manual no arquivo de rota.
 - Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/errorHandler.ts`) captura. Para entrada inválida, lançar `ValidationError` (`src/errors/ValidationError.ts`), que o middleware traduz em **400** com a mensagem do erro; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
+- Clientes de serviços externos ficam em `src/config/<provider>.ts` e são injetados por construtor (`prisma.ts`, `deepseek.ts`). Quando o SDK valida credencial no construtor — caso do `openai` —, exportar uma **factory** (`getDeepseekClient()`) em vez do cliente pronto: assim a falta da chave não derruba o servidor no boot, só falha a rota que usa aquele serviço.
+- **Express 4 não encaminha rejeição de Promise para o `errorHandler`.** Handler que chama Service assíncrono precisa propagar na mão — `.then(...).catch(next)` (ver `OnboardingController`). Sem isso a requisição fica pendurada até dar timeout em vez de virar 500.
 
 ## Testes (`tests/`)
 
@@ -134,6 +137,7 @@ backend/
   src/
     config/
       prisma.ts           # PrismaClient singleton
+      deepseek.ts         # cliente da IA (factory) + modelo
     controllers/
     services/
     repositories/
@@ -176,19 +180,32 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 
 `src/services/CalculoService.ts` já implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/CalculoService.test.ts`.
 
-Quem o consome é o `OnboardingService`, que o recebe por construtor (`new OnboardingService(new CalculoService())`, composto em `routes/onboarding.routes.ts`). Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM, quando entrar, só redige em cima destes valores — nunca calcula.
+Quem o consome é o `OnboardingService`, que o recebe por construtor (composto em `routes/onboarding.routes.ts`). Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
+
+## Integração com IA (`LlmService`)
+
+`src/services/LlmService.ts` é a terceira camada da arquitetura híbrida (motor determinístico → RAG → LLM redator). Hoje é um wrapper mínimo: `enviarMensagem(texto)` manda uma mensagem e devolve o texto da resposta.
+
+**O que existe hoje é só um teste de conexão** — `OnboardingService` chama a IA depois de calcular o plano e imprime a resposta no console, para provar que a integração funciona. Ainda **não há prompt de verdade**.
+
+Configuração em `src/config/deepseek.ts`, alimentada por `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL` no `.env`. Sem a chave, o servidor sobe normal e só `POST /api/onboarding` falha com 500 (a mensagem no log diz o que configurar).
+
+Nos testes o `LlmService` é sempre substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
+
+Falta construir (próxima etapa): o system prompt com as regras da fundamentação teórica (proibir o modelo de inventar ou recalcular número, citar os autores/Position Stands que embasam cada limite), a seleção de exercícios e alimentos a partir de tabelas, e o RAG.
 
 ## Endpoints
 
 | Método | Rota | O que faz |
 |---|---|---|
 | `GET` | `/api/health` | Health check — confirma que a API está de pé. |
-| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app, passa o `perfil` pelo `CalculoService` e **imprime o plano calculado no console** (é o contexto numérico que alimentará o prompt do LLM). Responde `{ recebido: true }` — o resultado ainda não vai na resposta. Devolve **400** se o `perfil` faltar ou for inválido. Ainda **sem persistência** e sem validação campo a campo (o `req.body` é convertido por cast). |
+| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app, passa o `perfil` pelo `CalculoService` e **imprime o plano calculado no console** (é o contexto numérico que alimentará o prompt do LLM). Em seguida consulta a IA e imprime a resposta (teste de conexão). Responde `{ recebido: true }` — nem o plano nem o texto da IA vão na resposta ainda. Devolve **400** se o `perfil` faltar ou for inválido, e **500** se a IA falhar. Ainda **sem persistência** e sem validação campo a campo (o `req.body` é convertido por cast). |
 
 ## Próximos passos (fora do escopo desta etapa)
 
-- Validação campo a campo do payload e retorno do plano calculado na resposta HTTP (hoje ele só vai para o console).
-- RAG + LLM: recuperar a fundamentação científica e redigir o plano em cima dos números do `CalculoService`.
+- Prompt real do LLM: system prompt com as regras da fundamentação teórica (não inventar número, citar os autores que embasam cada limite) e seleção de exercícios/alimentos a partir de tabelas.
+- RAG: banco vetorial com a literatura científica para ancorar o texto gerado.
+- Validação campo a campo do payload e retorno do plano na resposta HTTP (hoje só vai para o console).
 - Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta) e persistência.
 - Auth real (hash de senha com bcrypt, emissão/validação de JWT, middleware de autenticação).
 - Catálogo de exercícios (para a divisão de treino sair de "estrutura numérica" para exercícios concretos).
