@@ -143,6 +143,9 @@ backend/
     repositories/
     errors/
       ValidationError.ts  # erro de entrada inválida -> 400 no errorHandler
+    data/
+      alimentos.ts        # GERADO por scripts/importar-taco.ts — não editar
+      exercicios.ts       # catálogo escrito à mão
     routes/
       index.ts            # agrega os routers de recurso, montado em /api
     middlewares/
@@ -150,6 +153,8 @@ backend/
       notFoundHandler.ts
     app.ts                 # cria o express app, registra middlewares/rotas
     server.ts              # bootstrap: carrega .env e sobe o listener
+  scripts/
+    importar-taco.ts       # regenera src/data/alimentos.ts a partir da TACO
   tests/                   # espelha src/, só arquivos *.test.ts
   docker-compose.yml        # Postgres local (bodia/bodia/bodia, porta 5432)
   jest.config.js / tsconfig.jest.json
@@ -182,30 +187,73 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 
 Quem o consome é o `OnboardingService`, que o recebe por construtor (composto em `routes/onboarding.routes.ts`). Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
 
-## Integração com IA (`LlmService`)
+## Geração do plano pela IA
 
-`src/services/LlmService.ts` é a terceira camada da arquitetura híbrida (motor determinístico → RAG → LLM redator). Hoje é um wrapper mínimo: `enviarMensagem(texto)` manda uma mensagem e devolve o texto da resposta.
+O fluxo completo de `POST /api/onboarding` é:
 
-**O que existe hoje é só um teste de conexão** — `OnboardingService` chama a IA depois de calcular o plano e imprime a resposta no console, para provar que a integração funciona. Ainda **não há prompt de verdade**.
+```
+CalculoService  →  CatalogoService  →  PromptService  →  LlmService  →  PlanoService (valida)
+   os números       filtra restrições    monta o prompt     DeepSeek       confere as contas
+```
 
-Configuração em `src/config/deepseek.ts`, alimentada por `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL` no `.env`. Sem a chave, o servidor sobe normal e só `POST /api/onboarding` falha com 500 (a mensagem no log diz o que configurar).
+`PlanoService.gerar()` orquestra tudo; `OnboardingService` chama ele e imprime três blocos no console: o plano calculado, o plano gerado pela IA e a conferência dos macros. **Nada é persistido ainda** — o banco entra numa etapa posterior.
 
-Nos testes o `LlmService` é sempre substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
+### Catálogos (`src/data/`)
 
-Falta construir (próxima etapa): o system prompt com as regras da fundamentação teórica (proibir o modelo de inventar ou recalcular número, citar os autores/Position Stands que embasam cada limite), a seleção de exercícios e alimentos a partir de tabelas, e o RAG.
+- `alimentos.ts` — 591 itens da TACO (NEPA/UNICAMP), macros por 100 g. **Arquivo gerado**: nunca editar à mão, rodar `npx tsx scripts/importar-taco.ts`. O script fica versionado para documentar a procedência dos dados.
+- `exercicios.ts` — 100 exercícios escritos à mão. `sessoes` usa os mesmos nomes que `CalculoService.SPLIT_POR_DIAS` gera; `articulacoes` casa com os chips de restrição física do app.
+
+Os `id` são estáveis e servirão de chave estrangeira quando as fichas forem persistidas.
+
+### `CatalogoService` — a restrição é aplicada por código, não por instrução
+
+Filtra os catálogos **antes** de montar o prompt. O modelo não recebe leite para escolher, em vez de receber e ser instruído a não escolher — ele não pode violar uma restrição sobre um alimento que nunca viu.
+
+Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso negativo não**. Remover um alimento seguro custa variedade; manter um proibido pode machucar alguém. A exceção `VEGETAIS_COM_NOME_DE_LATICINIO` existe porque "Couve, manteiga" é hortaliça e "Soja, queijo (tofu)" é vegano — sem ela, o filtro de lactose comeria a couve.
+
+### `PromptService` — as três técnicas da fundamentação teórica (4.5.2)
+
+1. **System prompt**: contrato de papel — o modelo é redator, proibido de recalcular, arredondar ou "corrigir" qualquer valor recebido, e de citar item fora das listas.
+2. **Context injection**: valores do `CalculoService` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`).
+3. **Few-shot**: exemplo do JSON de saída. A palavra "json" e o exemplo são **requisito do JSON mode da DeepSeek**, não escolha estética.
+
+O system prompt cita a literatura que embasa cada limite (Pelland 2024, Schoenfeld 2016, ISSN/Jäger 2017, Stokes 2018, Kerksick 2017, Mifflin 1990). Isso não é enfeite acadêmico: explicar *por que* o número é aquele reduz a tentativa do modelo de "melhorar" o valor recebido — a alucinação de fidelidade de Zhang et al. (2024).
+
+Há limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
+
+### `PlanoService` — o número final nunca é aceito na palavra do modelo
+
+Duas validações depois da resposta:
+1. **IDs**: todo `alimentoId`/`exercicioId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
+2. **Macros**: recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância.
+
+Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa só mede.
+
+### `LlmService` e a configuração
+
+`gerarJson(system, user)` usa `response_format: json_object` e temperatura baixa (a fundamentação 4.2.3 trata a estocasticidade como problema de reprodutibilidade).
+
+**`max_tokens: 32000` não é exagero.** O `deepseek-v4-pro` é modelo de raciocínio e os `reasoning_tokens` contam dentro desse limite — montar um plano gasta ~8k tokens só de raciocínio. Com teto baixo o raciocínio esgota a cota e a resposta volta **vazia**, não truncada. Por isso o erro de resposta vazia carrega `finish_reason` e `usage`: sem eles não dá para distinguir essa causa de uma falha do modelo.
+
+Configuração em `src/config/deepseek.ts` (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`). Sem a chave o servidor sobe normal e só esta rota falha com 500.
+
+Nos testes o `LlmService` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
+
+### Latência
+
+Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio). O timeout do axios no mobile está em 10s, então o app ainda **não** consegue consumir esta rota — resolver isso (geração em background, com o app consultando o resultado depois) é trabalho pendente.
 
 ## Endpoints
 
 | Método | Rota | O que faz |
 |---|---|---|
 | `GET` | `/api/health` | Health check — confirma que a API está de pé. |
-| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }` do app, passa o `perfil` pelo `CalculoService` e **imprime o plano calculado no console** (é o contexto numérico que alimentará o prompt do LLM). Em seguida consulta a IA e imprime a resposta (teste de conexão). Responde `{ recebido: true }` — nem o plano nem o texto da IA vão na resposta ainda. Devolve **400** se o `perfil` faltar ou for inválido, e **500** se a IA falhar. Ainda **sem persistência** e sem validação campo a campo (o `req.body` é convertido por cast). |
+| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }`, calcula o plano determinístico, gera treino e dieta com a IA e **imprime no console** o plano calculado, o plano gerado e a conferência dos macros. Responde `{ recebido: true }` — o plano ainda não vai na resposta nem é persistido. **400** se o `perfil` faltar ou for inválido; **500** se a IA falhar. Leva ~2 min. |
 
 ## Próximos passos (fora do escopo desta etapa)
 
-- Prompt real do LLM: system prompt com as regras da fundamentação teórica (não inventar número, citar os autores que embasam cada limite) e seleção de exercícios/alimentos a partir de tabelas.
-- RAG: banco vetorial com a literatura científica para ancorar o texto gerado.
-- Validação campo a campo do payload e retorno do plano na resposta HTTP (hoje só vai para o console).
-- Modelagem do schema Prisma (usuário, perfil de onboarding, planos de treino/dieta) e persistência.
-- Auth real (hash de senha com bcrypt, emissão/validação de JWT, middleware de autenticação).
-- Catálogo de exercícios (para a divisão de treino sair de "estrutura numérica" para exercícios concretos).
+- **Latência**: a rota leva ~2 min e o mobile tem timeout de 10s. Enquanto não houver geração em background, o app não consegue consumir esta rota.
+- Retry automático quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
+- Persistência: schema Prisma (usuário, perfil, fichas de treino/dieta) usando os `id` dos catálogos como FK.
+- Retorno do plano na resposta HTTP (hoje só vai para o console) e exibição no app.
+- Auth real (bcrypt + JWT) e validação campo a campo do payload.
