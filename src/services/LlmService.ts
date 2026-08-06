@@ -12,12 +12,14 @@ import OpenAI from "openai";
 export default class LlmService {
     private readonly criarClient;
     private readonly model;
+    private readonly timeoutMs;
 
     // Recebe uma função em vez do cliente pronto: o SDK exige a credencial já na
     // construção, então o cliente só é criado quando a IA é de fato usada.
-    constructor(criarClient: () => OpenAI, model: string) {
+    constructor(criarClient: () => OpenAI, model: string, timeoutMs: number) {
         this.criarClient = criarClient;
         this.model = model;
+        this.timeoutMs = timeoutMs;
     }
 
     async enviarMensagem(mensagem: string): Promise<string> {
@@ -35,20 +37,57 @@ export default class LlmService {
      * que exigem resultados reprodutíveis e auditáveis.
      */
     async gerarJson(system: string, user: string): Promise<string> {
-        const resposta = await this.criarClient().chat.completions.create({
-            model: this.model,
-            messages: [
-                { role: "system", content: system },
-                { role: "user", content: user },
-            ],
-            response_format: { type: "json_object" },
-            temperature: 0.2,
-            // O V4-Pro é um modelo de raciocínio, e os reasoning_tokens contam
-            // dentro deste limite. Montar um plano completo consome ~8k tokens só
-            // de raciocínio: com um teto baixo, o raciocínio esgota a cota e a
-            // resposta volta VAZIA em vez de truncada.
-            max_tokens: 32000,
-        });
+        // Sem estes logs, o console fica em silencio por ~1 min entre "plano
+        // calculado" e o plano pronto, e nao da para distinguir "a IA esta
+        // trabalhando" de "o backend travou".
+        const caracteres = system.length + user.length;
+        console.log(
+            `[ia] conectando em ${this.model} — enviando prompt de ${caracteres} caracteres...`,
+        );
+
+        const inicio = Date.now();
+
+        const resposta = await this.criarClient().chat.completions.create(
+            {
+                model: this.model,
+                messages: [
+                    { role: "system", content: system },
+                    { role: "user", content: user },
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.2,
+                // O raciocínio vem ligado por padrão no esforço mais alto e é
+                // ele que domina o tempo. Sem limite ele dispara: uma chamada
+                // real gastou os 32000 tokens inteiros raciocinando e devolveu
+                // conteúdo VAZIO (finish_reason=length), perdendo 328s e o custo
+                // integral. Desligar de vez não serve — sem raciocínio o modelo
+                // erra os macros (gordura saiu -34,8% num teste).
+                //
+                // "low" é uma tentativa de meio termo, mas NÃO se mostrou
+                // suficiente: com ele a geração ainda estourou os 180s. A causa
+                // real é a dificuldade aritmética da tarefa (encaixar gramas de
+                // 591 alimentos até fechar 4 macros ao mesmo tempo), e o
+                // caminho é simplificar o problema, não ajustar este parâmetro.
+                reasoning_effort: "low",
+                // Os reasoning_tokens contam dentro deste limite.
+                max_tokens: 32000,
+            },
+            // O `timeout` do cliente não basta: o SDK o cancela quando chegam os
+            // cabeçalhos, e a geração acontece depois disso. Este sinal continua
+            // valendo durante a leitura do corpo, então é ele que de fato limita.
+            { signal: AbortSignal.timeout(this.timeoutMs) },
+        );
+
+        const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
+        const uso = resposta.usage;
+        const raciocinio = uso?.completion_tokens_details?.reasoning_tokens ?? 0;
+
+        // O tempo quase todo vai no raciocinio, entao ele aparece separado: e o
+        // numero que explica a demora e o que muda ao trocar de modelo/modo.
+        console.log(
+            `[ia] resposta recebida em ${segundos}s — ${uso?.prompt_tokens ?? "?"} tokens de entrada, ` +
+                `${uso?.completion_tokens ?? "?"} gerados (${raciocinio} de raciocinio)`,
+        );
 
         const conteudo = resposta.choices[0]?.message?.content;
 

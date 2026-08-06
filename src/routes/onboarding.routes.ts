@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { deepseekModel, getDeepseekClient } from "../config/deepseek";
+import { deepseekModel, deepseekTimeoutMs, getDeepseekClient } from "../config/deepseek";
 import OnboardingController from "../controllers/OnboardingController";
 import CalculoService from "../services/CalculoService";
 import CatalogoService from "../services/CatalogoService";
@@ -14,7 +14,7 @@ const router = Router();
 const planoService = new PlanoService(
     new CatalogoService(),
     new PromptService(),
-    new LlmService(getDeepseekClient, deepseekModel),
+    new LlmService(getDeepseekClient, deepseekModel, deepseekTimeoutMs),
 );
 
 const onboardingController = new OnboardingController(
