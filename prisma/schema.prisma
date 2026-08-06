@@ -1,3 +1,10 @@
+// Modelagem do BodIA. Três blocos, nesta ordem:
+//   1. Catálogos  — alimentos (TACO) e exercícios; alvo das chaves estrangeiras
+//   2. Usuário e plano — quem é a pessoa e o que o motor determinístico gerou
+//   3. Registros diários — o que a pessoa de fato comeu, treinou e bebeu
+//
+// Os enums espelham os tipos de src/services/CalculoService.ts.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -5,4 +12,299 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 1. Catálogos
+// ---------------------------------------------------------------------------
+
+/// Recorte da Tabela Brasileira de Composição de Alimentos (TACO, NEPA/UNICAMP).
+/// O id é o MESMO da TACO — vem de src/data/alimentos.ts, que o prompt também
+/// usa. Assim o id que a IA devolve é chave estrangeira direta, sem tradução.
+model Alimento {
+  id          Int    @id
+  nome        String
+  categoria   String
+  /// Valores por 100 g.
+  kcal        Float
+  proteina    Float
+  carboidrato Float
+  gordura     Float
+  fibra       Float
+
+  itensRefeicao RefeicaoItem[]
+
+  @@index([categoria])
+}
+
+/// Catálogo de exercícios (src/data/exercicios.ts).
+model Exercicio {
+  id            Int      @id
+  nome          String
+  grupoMuscular String
+  /// Sessões em que cabe: Push, Pull, Legs, Upper, Lower, Corpo inteiro.
+  sessoes       String[]
+  /// Articulações exigidas — é o que permite excluir exercício por lesão.
+  articulacoes  String[]
+
+  fichas FichaTreinoExercicio[]
+  series SerieRealizada[]
+
+  @@index([grupoMuscular])
+}
+
+// ---------------------------------------------------------------------------
+// 2. Usuário e plano
+// ---------------------------------------------------------------------------
+
+model Usuario {
+  id        String   @id @default(uuid())
+  nome      String
+  sobrenome String
+  email     String   @unique
+  /// Sempre hash (bcrypt) — nunca a senha em texto.
+  senhaHash String
+  criadoEm  DateTime @default(now())
+
+  perfil      Perfil?
+  planos      Plano[]
+  sessoes     SessaoTreino[]
+  refeicoes   RegistroRefeicao[]
+  hidratacoes RegistroHidratacao[]
+}
+
+/// Respostas do onboarding. É a entrada do CalculoService.
+model Perfil {
+  id                String           @id @default(uuid())
+  usuarioId         String           @unique
+  sexo              Sexo
+  dataNascimento    DateTime
+  pesoKg            Float
+  alturaCm          Float
+  percentualGordura Float?
+  nivelAtividade    NivelAtividade
+  nivelExperiencia  NivelExperiencia
+  objetivo          Objetivo
+  diasPorSemana     Int
+  numeroRefeicoes   Int              @default(4)
+  atualizadoEm      DateTime         @updatedAt
+
+  usuario    Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  restricoes Restricao[]
+}
+
+/// Restrição alimentar ou física. Tabela única porque o app trata as duas do
+/// mesmo jeito — lista de texto, incluindo o campo livre "Outro".
+model Restricao {
+  id        String        @id @default(uuid())
+  perfilId  String
+  tipo      TipoRestricao
+  descricao String
+
+  perfil Perfil @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+
+  @@index([perfilId, tipo])
+}
+
+/// Fotografia do que o motor determinístico calculou. Recalcular cria um Plano
+/// novo em vez de sobrescrever: assim o histórico mostra a evolução das metas.
+model Plano {
+  id        String   @id @default(uuid())
+  usuarioId String
+  geradoEm  DateTime @default(now())
+  ativo     Boolean  @default(true)
+
+  // Metabolismo e meta (CalculoService)
+  tmb          Int
+  tdee         Int
+  caloriasAlvo Int
+  proteinaG    Int
+  carboidratoG Int
+  gorduraG     Int
+  metaAguaMl   Int @default(2000)
+
+  // Estrutura de treino
+  split                String
+  diasPorSemana        Int
+  seriesPorGrupoSemana Int
+
+  /// Texto de orientação redigido pelo LLM. Os números NUNCA vêm daqui.
+  observacoes String?
+
+  usuario   Usuario       @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  fichas    FichaTreino[]
+  refeicoes Refeicao[]
+
+  @@index([usuarioId, ativo])
+}
+
+/// Uma sessão de treino do plano (Upper, Push, Legs...).
+model FichaTreino {
+  id                String @id @default(uuid())
+  planoId           String
+  nome              String
+  /// Quantas vezes na semana esta sessão se repete.
+  frequenciaSemanal Int
+  ordem             Int
+
+  plano      Plano                  @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  exercicios FichaTreinoExercicio[]
+  sessoes    SessaoTreino[]
+
+  @@index([planoId])
+}
+
+model FichaTreinoExercicio {
+  id               String @id @default(uuid())
+  fichaTreinoId    String
+  exercicioId      Int
+  series           Int
+  /// Faixa, não número: "8-12".
+  repeticoes       String
+  descansoSegundos Int    @default(60)
+  ordem            Int
+
+  fichaTreino FichaTreino @relation(fields: [fichaTreinoId], references: [id], onDelete: Cascade)
+  exercicio   Exercicio   @relation(fields: [exercicioId], references: [id])
+
+  @@index([fichaTreinoId])
+}
+
+/// Refeição prescrita no plano, com a meta calculada para ela.
+model Refeicao {
+  id           String @id @default(uuid())
+  planoId      String
+  nome         String
+  /// Sugestão de horário exibida no app ("07:30").
+  horario      String
+  ordem        Int
+  kcal         Int
+  proteinaG    Int
+  carboidratoG Int
+  gorduraG     Int
+
+  plano     Plano              @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  itens     RefeicaoItem[]
+  registros RegistroRefeicao[]
+
+  @@index([planoId])
+}
+
+model RefeicaoItem {
+  id         String @id @default(uuid())
+  refeicaoId String
+  alimentoId Int
+  gramas     Float
+
+  refeicao Refeicao @relation(fields: [refeicaoId], references: [id], onDelete: Cascade)
+  alimento Alimento @relation(fields: [alimentoId], references: [id])
+
+  @@index([refeicaoId])
+}
+
+// ---------------------------------------------------------------------------
+// 3. Registros diários
+//
+// O BodIA não é só gerador de plano: o usuário registra o que treinou, comeu e
+// bebeu. Todo índice aqui é por (usuario, data), que é como a Home consulta.
+// ---------------------------------------------------------------------------
+
+/// Um treino executado. Criado ao iniciar a sessão; os totais são preenchidos
+/// ao finalizar (é o que a tela de resumo pós-treino mostra).
+model SessaoTreino {
+  id              String    @id @default(uuid())
+  usuarioId       String
+  fichaTreinoId   String
+  iniciadaEm      DateTime  @default(now())
+  finalizadaEm    DateTime?
+  duracaoSegundos Int?
+  totalSeries     Int?
+  volumeKg        Float?
+
+  usuario     Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  fichaTreino FichaTreino      @relation(fields: [fichaTreinoId], references: [id])
+  series      SerieRealizada[]
+
+  @@index([usuarioId, iniciadaEm])
+}
+
+/// Uma série executada, com a carga e as repetições que a pessoa realmente fez.
+/// É a base da sobrecarga progressiva: comparar com a sessão anterior.
+model SerieRealizada {
+  id             String  @id @default(uuid())
+  sessaoTreinoId String
+  exercicioId    Int
+  numeroSerie    Int
+  pesoKg         Float?
+  repeticoes     Int?
+  concluida      Boolean @default(false)
+
+  sessaoTreino SessaoTreino @relation(fields: [sessaoTreinoId], references: [id], onDelete: Cascade)
+  exercicio    Exercicio    @relation(fields: [exercicioId], references: [id])
+
+  @@unique([sessaoTreinoId, exercicioId, numeroSerie])
+}
+
+/// Marca que a refeição do plano foi consumida naquele dia.
+model RegistroRefeicao {
+  id          String   @id @default(uuid())
+  usuarioId   String
+  refeicaoId  String
+  data        DateTime @db.Date
+  consumidaEm DateTime @default(now())
+
+  usuario  Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  refeicao Refeicao @relation(fields: [refeicaoId], references: [id], onDelete: Cascade)
+
+  /// Uma refeição só pode ser marcada uma vez por dia.
+  @@unique([usuarioId, refeicaoId, data])
+  @@index([usuarioId, data])
+}
+
+/// Um gole registrado (+250 ml, +500 ml). Guardar evento em vez de total do dia
+/// é o que permite desfazer um registro errado.
+model RegistroHidratacao {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  data         DateTime @db.Date
+  mililitros   Int
+  registradoEm DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, data])
+}
+
+// ---------------------------------------------------------------------------
+// Enums — espelham os tipos de CalculoService.ts
+// ---------------------------------------------------------------------------
+
+enum Sexo {
+  M
+  F
+}
+
+enum NivelAtividade {
+  SEDENTARIO
+  LEVE
+  MODERADO
+  INTENSO
+  ATLETA
+}
+
+enum NivelExperiencia {
+  INICIANTE
+  INTERMEDIARIO
+  AVANCADO
+}
+
+enum Objetivo {
+  PERDER
+  MANTER
+  GANHAR
+}
+
+enum TipoRestricao {
+  ALIMENTAR
+  FISICA
 }
