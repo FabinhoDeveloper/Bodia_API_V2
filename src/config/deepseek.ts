@@ -43,3 +43,10 @@ export function getDeepseekClient(): OpenAI {
 }
 
 export const deepseekModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
+
+/**
+ * Quando true, a rota usa o PlanoSimuladoService em vez de chamar a IA. Padrão
+ * ligado: a geração real hoje leva ~3 min e falha com frequência, o que
+ * inviabiliza desenvolver o resto do produto em cima dela.
+ */
+export const simularIa = (process.env.SIMULAR_IA ?? "true").toLowerCase() !== "false";

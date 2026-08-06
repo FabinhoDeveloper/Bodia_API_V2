@@ -1,6 +1,7 @@
 import ValidationError from "../errors/ValidationError";
-import CalculoService, { PerfilInput } from "./CalculoService";
-import PlanoService from "./PlanoService";
+import CalculoService, { PerfilInput, ResultadoCalculo } from "./CalculoService";
+import PlanoMapper, { PlanoDTO } from "./PlanoMapper";
+import { PerfilParaPlano, PlanoValidado } from "./PlanoService";
 
 export interface ContaInput {
     nome: string;
@@ -20,25 +21,39 @@ export interface CadastroInput {
 }
 
 /**
+ * Qualquer gerador de plano serve aqui — o PlanoService (que chama a IA) ou o
+ * PlanoSimuladoService (fixture). Qual dos dois entra é decidido na rota, pela
+ * flag SIMULAR_IA.
+ */
+export interface GeradorDePlano {
+    gerar(perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado>;
+}
+
+/**
  * Orquestra o cadastro que chega do app (POST /api/onboarding, via
- * OnboardingController): valida se há perfil, manda calcular o plano
- * (CalculoService) e manda gerar treino e dieta com a IA (PlanoService).
+ * OnboardingController): valida se há perfil, calcula os números
+ * (CalculoService), manda montar treino e dieta e converte o resultado no
+ * formato que o app consome (PlanoMapper).
  *
- * Imprime os três estágios no console — plano calculado, plano gerado pela
- * IA e a conferência dos macros — porque, por enquanto, é assim que o
- * resultado é observado: nada ainda é persistido nem devolvido na resposta
- * HTTP (que continua sendo só { recebido: true }).
+ * Devolve o plano na resposta HTTP e também o imprime no console. Nada é
+ * persistido ainda — o app guarda o plano em memória.
  */
 export default class OnboardingService {
     private readonly calculoService;
-    private readonly planoService;
+    private readonly geradorDePlano;
+    private readonly planoMapper;
 
-    constructor(calculoService: CalculoService, planoService: PlanoService) {
+    constructor(
+        calculoService: CalculoService,
+        geradorDePlano: GeradorDePlano,
+        planoMapper: PlanoMapper,
+    ) {
         this.calculoService = calculoService;
-        this.planoService = planoService;
+        this.geradorDePlano = geradorDePlano;
+        this.planoMapper = planoMapper;
     }
 
-    async receberCadastro(cadastro: CadastroInput): Promise<{ recebido: true }> {
+    async receberCadastro(cadastro: CadastroInput): Promise<{ plano: PlanoDTO }> {
         if (!cadastro.perfil) {
             throw new ValidationError("perfil é obrigatório para gerar o plano");
         }
@@ -47,11 +62,14 @@ export default class OnboardingService {
 
         console.log("[onboarding] plano calculado:", JSON.stringify(resultado, null, 2));
 
-        const { plano, validacao } = await this.planoService.gerar(cadastro.perfil, resultado);
+        const { plano, validacao } = await this.geradorDePlano.gerar(cadastro.perfil, resultado);
 
-        console.log("[onboarding] plano gerado pela IA:", JSON.stringify(plano, null, 2));
         console.log("[onboarding] conferência dos macros:", JSON.stringify(validacao, null, 2));
 
-        return { recebido: true };
+        const planoDTO = this.planoMapper.montar(plano, resultado);
+
+        console.log("[onboarding] plano enviado ao app:", JSON.stringify(planoDTO, null, 2));
+
+        return { plano: planoDTO };
     }
 }
