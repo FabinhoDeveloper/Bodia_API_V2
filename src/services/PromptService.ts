@@ -61,11 +61,13 @@ Estes limites vêm da literatura científica e explicam os valores que você rec
 
 ## Como montar a dieta
 
-- Distribua as calorias e os macros entre o número de refeições informado.
+- O que vale é o TOTAL DO DIA. As calorias sugeridas por refeição são só uma orientação de como distribuir ao longo do dia — não precisa fechar cada refeição no número exato.
 - Cada item precisa de: alimentoId (da lista), nome e quantidade em gramas.
 - Os valores da lista são por 100 g. Um alimento com 124 kcal por 100 g em 150 g contribui com 186 kcal.
-- A soma do dia deve chegar o mais perto possível das metas recebidas. O sistema vai conferir essa soma; desvio grande será rejeitado.
-- Monte refeições realistas para o Brasil: combine fontes de proteína, carboidrato, gordura e vegetais.
+- Use 3 a 5 alimentos por refeição, em gramas redondas (50, 100, 120, 150...).
+- Monte refeições realistas para o Brasil: combine fontes de proteína, carboidrato, gordura e vegetais, e respeite o horário (não coloque feijão no café da manhã).
+
+IMPORTANTE SOBRE PRECISÃO: uma diferença de até 5% no total do dia é perfeitamente aceitável. NÃO gaste esforço procurando a combinação matematicamente perfeita — faça uma escolha razoável de alimentos e porções e siga em frente. Uma estimativa boa e rápida vale mais que uma busca exaustiva.
 
 ## Como montar o treino
 
@@ -136,7 +138,9 @@ META DE PROTEÍNA: ${macros.proteina.g} g (${macros.proteina.kcal} kcal)
 META DE CARBOIDRATO: ${macros.carboidrato.g} g (${macros.carboidrato.kcal} kcal)
 META DE GORDURA: ${macros.gordura.g} g (${macros.gordura.kcal} kcal)
 
-Número de refeições no dia: ${dieta.numeroRefeicoes}
+# Refeições do dia (calorias sugeridas, apenas para orientar a distribuição)
+
+${dieta.refeicoes.map((r) => `${r.nome}: ~${r.kcal} kcal`).join("\n")}
 
 Divisão de treino: ${treino.split}
 Dias de treino por semana: ${treino.diasPorSemana}

@@ -163,6 +163,43 @@ describe("CalculoService", () => {
         },
     );
 
+    // O modelo recebe a meta de cada refeição em vez do total do dia. Se as
+    // partes não somarem o total, o plano fecha certo por refeição e errado no
+    // dia — por isso a soma é verificada nos quatro cenários.
+    describe("distribuição por refeição", () => {
+        it.each([3, 4, 5, 6])("gera %i refeições com nomes distintos", (numeroRefeicoes) => {
+            const { dieta } = calculoService.calcular(perfilBase({ numeroRefeicoes }));
+
+            expect(dieta.numeroRefeicoes).toBe(numeroRefeicoes);
+            expect(dieta.refeicoes).toHaveLength(numeroRefeicoes);
+            expect(new Set(dieta.refeicoes.map((r) => r.nome)).size).toBe(numeroRefeicoes);
+        });
+
+        it.each([3, 4, 5, 6])(
+            "a soma das %i refeições fecha exatamente a meta do dia",
+            (numeroRefeicoes) => {
+                const { dieta, meta, macros } = calculoService.calcular(
+                    perfilBase({ numeroRefeicoes }),
+                );
+                const somar = (campo: "kcal" | "proteina" | "carboidrato" | "gordura") =>
+                    dieta.refeicoes.reduce((total, r) => total + r[campo], 0);
+
+                expect(somar("kcal")).toBe(meta.caloriasAlvo);
+                expect(somar("proteina")).toBe(macros.proteina.g);
+                expect(somar("carboidrato")).toBe(macros.carboidrato.g);
+                expect(somar("gordura")).toBe(macros.gordura.g);
+            },
+        );
+
+        it("concentra mais calorias no almoço que no café da manhã", () => {
+            const { dieta } = calculoService.calcular(perfilBase({ numeroRefeicoes: 4 }));
+            const almoco = dieta.refeicoes.find((r) => r.nome === "Almoço")!;
+            const cafe = dieta.refeicoes.find((r) => r.nome === "Café da manhã")!;
+
+            expect(almoco.kcal).toBeGreaterThan(cafe.kcal);
+        });
+    });
+
     describe("validarPerfil", () => {
         it("lança erro se diasPorSemana estiver fora de 2-6", () => {
             expect(() => calculoService.calcular(perfilBase({ diasPorSemana: 1 }))).toThrow(

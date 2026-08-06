@@ -19,7 +19,7 @@ const PERFIL: PerfilInput = {
 const PERFIL_PLANO: PerfilParaPlano = { restricoesAlimentares: [], restricoesFisicas: [] };
 
 // Arroz, tipo 1, cozido (id 3): 128.26 kcal, 2.52 prot, 28.06 carb, 0.23 gord /100g
-// Frango, peito, sem pele, cru (id 409): 119.16 kcal, 21.53 prot, 0 carb, 3.02 gord /100g
+// Frango, peito, sem pele, grelhado (id 410): 159.19 kcal, 32.03 prot, 0 carb, 2.48 gord /100g
 function planoValido() {
     return {
         dieta: {
@@ -28,7 +28,7 @@ function planoValido() {
                     nome: "Almoço",
                     itens: [
                         { alimentoId: 3, nome: "Arroz, tipo 1, cozido", gramas: 100 },
-                        { alimentoId: 409, nome: "Frango, peito, sem pele, cru", gramas: 200 },
+                        { alimentoId: 410, nome: "Frango, peito, sem pele, grelhado", gramas: 200 },
                     ],
                 },
             ],
@@ -77,9 +77,9 @@ describe("PlanoService", () => {
         const { validacao } = await planoService.gerar(PERFIL_PLANO, resultado);
 
         // 100g de arroz + 200g de frango:
-        // kcal = 128.26 + 238.32 = 366.6 | proteína = 2.52 + 43.06 = 45.6
-        expect(validacao.calorias.obtido).toBeCloseTo(366.6, 1);
-        expect(validacao.proteina.obtido).toBeCloseTo(45.6, 1);
+        // kcal = 128.26 + 318.38 = 446.6 | proteína = 2.52 + 64.06 = 66.6
+        expect(validacao.calorias.obtido).toBeCloseTo(446.6, 1);
+        expect(validacao.proteina.obtido).toBeCloseTo(66.6, 1);
         expect(validacao.calorias.meta).toBe(resultado.meta.caloriasAlvo);
     });
 
@@ -123,7 +123,7 @@ describe("PlanoService", () => {
                 { restricoesAlimentares: ["Vegano"], restricoesFisicas: [] },
                 resultado,
             ),
-        ).rejects.toThrow(/Frango, peito, sem pele, cru/);
+        ).rejects.toThrow(/Frango, peito, sem pele, grelhado/);
     });
 
     it("rejeita JSON malformado", async () => {

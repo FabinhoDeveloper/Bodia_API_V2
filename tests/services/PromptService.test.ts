@@ -78,7 +78,26 @@ describe("PromptService", () => {
         expect(user).toContain(`META DE PROTEÍNA: ${resultado.macros.proteina.g} g`);
         expect(user).toContain(resultado.treino.split);
         expect(user).toContain(`distribuir entre exercícios e sessões): ${resultado.treino.seriesPorGrupoSemana}`);
-        expect(user).toContain(`Número de refeições no dia: ${resultado.dieta.numeroRefeicoes}`);
+    });
+
+    // As calorias por refeição entram como ORIENTAÇÃO, não como meta a fechar.
+    // Exigir os 4 macros em cada refeição vira 16 restrições simultâneas e faz o
+    // raciocínio do modelo disparar — medido: a geração estourava os 180s.
+    it("sugere as calorias de cada refeição sem transformá-las em meta rígida", () => {
+        const { user, system } = montar();
+
+        for (const refeicao of resultado.dieta.refeicoes) {
+            expect(user).toContain(`${refeicao.nome}: ~${refeicao.kcal} kcal`);
+        }
+
+        expect(user).toContain("apenas para orientar");
+        expect(system).toContain("O que vale é o TOTAL DO DIA");
+    });
+
+    // Sem saber que 5% é aceitável, o modelo busca a combinação perfeita e
+    // queima raciocínio sem controle.
+    it("informa a tolerância aceitável para o modelo não buscar precisão exata", () => {
+        expect(montar().system).toMatch(/até 5% no total do dia é perfeitamente aceitável/i);
     });
 
     it("lista os alimentos com id e macros por 100 g", () => {

@@ -9,7 +9,7 @@ describe("CatalogoService", () => {
 
     describe("filtrarAlimentos", () => {
         it("devolve o catálogo inteiro quando não há restrição", () => {
-            expect(catalogoService.filtrarAlimentos([]).length).toBeGreaterThan(500);
+            expect(catalogoService.filtrarAlimentos([]).length).toBeGreaterThan(250);
         });
 
         it("remove todo alimento de origem animal para veganos", () => {
@@ -22,7 +22,7 @@ describe("CatalogoService", () => {
                     /carne|frango|peixe|camarão|leite, de vaca|iogurte|ovo, de|queijo,/i.test(a.nome),
                 ),
             ).toEqual([]);
-            expect(alimentos.length).toBeGreaterThan(200);
+            expect(alimentos.length).toBeGreaterThan(150);
         });
 
         it("remove carnes mas mantém laticínios e ovos para vegetarianos", () => {

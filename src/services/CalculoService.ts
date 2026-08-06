@@ -44,7 +44,16 @@ export interface ResultadoCalculo {
     };
     dieta: {
         numeroRefeicoes: number;
+        refeicoes: MetaRefeicao[];
     };
+}
+
+export interface MetaRefeicao {
+    nome: string;
+    kcal: number;
+    proteina: number;
+    carboidrato: number;
+    gordura: number;
 }
 
 interface Sessao {
@@ -89,6 +98,42 @@ export default class CalculoService {
 
     // Usado quando o app não informa quantas refeições o usuário faz por dia.
     private static readonly REFEICOES_PADRAO = 4;
+
+    // Nome e fatia do total diário de cada refeição. A fundamentação teórica não
+    // fixa distribuição por refeição — estes percentuais são parâmetro de
+    // engenharia, seguindo a prática usual de concentrar no almoço.
+    //
+    // Existem para dar ao LLM uma meta pequena por refeição em vez do total do
+    // dia: dividir um problema de 4 restrições em N problemas menores reduz
+    // drasticamente o raciocínio que ele gasta tentando fechar as contas.
+    private static readonly DISTRIBUICAO_REFEICOES: Record<number, [string, number][]> = {
+        3: [
+            ["Café da manhã", 0.3],
+            ["Almoço", 0.4],
+            ["Jantar", 0.3],
+        ],
+        4: [
+            ["Café da manhã", 0.25],
+            ["Almoço", 0.35],
+            ["Lanche da tarde", 0.15],
+            ["Jantar", 0.25],
+        ],
+        5: [
+            ["Café da manhã", 0.2],
+            ["Lanche da manhã", 0.1],
+            ["Almoço", 0.3],
+            ["Lanche da tarde", 0.15],
+            ["Jantar", 0.25],
+        ],
+        6: [
+            ["Café da manhã", 0.2],
+            ["Lanche da manhã", 0.1],
+            ["Almoço", 0.28],
+            ["Lanche da tarde", 0.12],
+            ["Jantar", 0.22],
+            ["Ceia", 0.08],
+        ],
+    };
 
     // dose-resposta citada (Pelland et al., 2024) sem número fechado - faixas 8-12/12-16/16-20, usando o meio
     private static readonly SERIES_POR_GRUPO_SEMANA: Record<NivelExperiencia, number> = {
@@ -146,7 +191,7 @@ export default class CalculoService {
         const meta = this.calcularMetaCalorica(perfil.objetivo, metabolismo.tdee);
         const macros = this.calcularMacros(perfil, meta.caloriasAlvo);
         const treino = this.calcularTreino(perfil);
-        const dieta = { numeroRefeicoes: perfil.numeroRefeicoes ?? CalculoService.REFEICOES_PADRAO };
+        const dieta = this.calcularDieta(perfil, meta, macros);
 
         return { metabolismo, meta, macros, treino, dieta };
     }
@@ -248,5 +293,47 @@ export default class CalculoService {
         const seriesPorGrupoSemana = CalculoService.SERIES_POR_GRUPO_SEMANA[perfil.nivelExperiencia];
 
         return { diasPorSemana: perfil.diasPorSemana, split, sessoes, seriesPorGrupoSemana };
+    }
+
+    /**
+     * Reparte a meta diária entre as refeições. A última refeição recebe o que
+     * sobrou em vez do seu percentual: assim a soma das partes fecha exatamente
+     * o total do dia, sem o centavo perdido no arredondamento de cada fatia.
+     */
+    private calcularDieta(
+        perfil: PerfilInput,
+        meta: ResultadoCalculo["meta"],
+        macros: ResultadoCalculo["macros"],
+    ): ResultadoCalculo["dieta"] {
+        const numeroRefeicoes = perfil.numeroRefeicoes ?? CalculoService.REFEICOES_PADRAO;
+        const distribuicao = CalculoService.DISTRIBUICAO_REFEICOES[numeroRefeicoes];
+
+        const restante = {
+            kcal: meta.caloriasAlvo,
+            proteina: macros.proteina.g,
+            carboidrato: macros.carboidrato.g,
+            gordura: macros.gordura.g,
+        };
+
+        const refeicoes = distribuicao.map(([nome, fatia], indice) => {
+            const ultima = indice === distribuicao.length - 1;
+
+            const porcao = {
+                nome,
+                kcal: ultima ? restante.kcal : Math.round(meta.caloriasAlvo * fatia),
+                proteina: ultima ? restante.proteina : Math.round(macros.proteina.g * fatia),
+                carboidrato: ultima ? restante.carboidrato : Math.round(macros.carboidrato.g * fatia),
+                gordura: ultima ? restante.gordura : Math.round(macros.gordura.g * fatia),
+            };
+
+            restante.kcal -= porcao.kcal;
+            restante.proteina -= porcao.proteina;
+            restante.carboidrato -= porcao.carboidrato;
+            restante.gordura -= porcao.gordura;
+
+            return porcao;
+        });
+
+        return { numeroRefeicoes, refeicoes };
     }
 }
