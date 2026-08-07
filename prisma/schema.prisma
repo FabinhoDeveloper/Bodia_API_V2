@@ -1,10 +1,19 @@
 // Modelagem do BodIA — construída em etapas, uma revisada por vez.
 //
-// Nesta primeira etapa entram só as tabelas de base:
-//   - Alimento e Exercicio: cópia dos catálogos em memória, para as tabelas
-//     futuras (ficha de treino, refeição) poderem apontar para elas por FK;
-//   - Usuario: dados pessoais e físicos, vindos do cadastro e do onboarding;
-//   - RegistroPeso: histórico de peso, ligado ao usuário.
+// Base:
+//   - Alimento e Exercicio: cópia dos catálogos em memória (src/data/), alvo
+//     das chaves estrangeiras das fichas;
+//   - Usuario: dados pessoais e físicos, do cadastro e do onboarding;
+//   - RegistroPeso: histórico de peso;
+//   - Restricao: restrições alimentares e físicas declaradas no onboarding.
+//
+// Prescrição (o que o plano gerado manda fazer):
+//   FichaTreino      → SessaoTreino[]  → ExercicioSessao[] → Exercicio
+//   FichaAlimentacao → Refeicao[]      → ItemRefeicao[]    → Alimento
+//
+// Ainda não modelado: o que foi EXECUTADO (treino feito, refeição consumida,
+// hidratação). Prescrição e execução são coisas distintas e virão em tabelas
+// próprias.
 //
 // Os enums espelham os tipos de src/services/CalculoService.ts.
 
@@ -38,6 +47,8 @@ model Alimento {
   gordura     Float
   fibra       Float
 
+  itensRefeicao ItemRefeicao[]
+
   @@index([categoria])
 }
 
@@ -50,6 +61,8 @@ model Exercicio {
   sessoes       String[]
   /// Articulações sob carga — é o que permite excluir exercício por lesão.
   articulacoes  String[]
+
+  emSessoes ExercicioSessao[]
 
   @@index([grupoMuscular])
 }
@@ -86,7 +99,27 @@ model Usuario {
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
-  pesos RegistroPeso[]
+  pesos             RegistroPeso[]
+  restricoes        Restricao[]
+  fichasTreino      FichaTreino[]
+  fichasAlimentacao FichaAlimentacao[]
+}
+
+/// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo
+/// livre "Outro"). Tabela única para os dois tipos porque o app trata ambos do
+/// mesmo jeito: lista de texto.
+///
+/// São o que faz o gerador do plano excluir alimentos e exercícios — sem isso,
+/// um vegano receberia frango.
+model Restricao {
+  id        String        @id @default(uuid())
+  usuarioId String
+  tipo      TipoRestricao
+  descricao String
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, tipo])
 }
 
 /// Histórico de peso. O primeiro registro nasce no cadastro; os seguintes, cada
@@ -105,6 +138,148 @@ model RegistroPeso {
 
   /// Serve tanto para "peso atual" (mais recente) quanto para o gráfico.
   @@index([usuarioId, registradoEm])
+}
+
+// ---------------------------------------------------------------------------
+// Prescrição: ficha de treino
+//
+// FichaTreino → SessaoTreino[] → ExercicioSessao[] → Exercicio (catálogo)
+// ---------------------------------------------------------------------------
+
+/// O treino prescrito ao usuário, com os números que o CalculoService produziu.
+///
+/// Gerar um plano novo NÃO apaga o anterior: cria outra ficha e marca a antiga
+/// como inativa. Preserva a evolução das metas e, quando o treino executado for
+/// modelado, mantém válida a ficha em que cada treino foi feito.
+///
+/// ATENÇÃO: "só uma ficha ativa por usuário" não é garantido por constraint —
+/// exigiria índice parcial em SQL cru. É responsabilidade do repository
+/// desativar a anterior na MESMA transação em que cria a nova.
+model FichaTreino {
+  id        String   @id @default(uuid())
+  usuarioId String
+  ativa     Boolean  @default(true)
+  criadaEm  DateTime @default(now())
+
+  split                String
+  diasPorSemana        Int
+  seriesPorGrupoSemana Int
+
+  usuario Usuario        @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sessoes SessaoTreino[]
+
+  @@index([usuarioId, ativa])
+}
+
+/// Um treino da semana ("Upper", "Push"). O grupo muscular exibido no card
+/// NÃO é coluna: sai dos exercícios da sessão, para não virar dado que possa
+/// contradizer a lista.
+model SessaoTreino {
+  id                String @id @default(uuid())
+  fichaTreinoId     String
+  nome              String
+  /// Dia sugerido ("Segunda"). É apresentação, mas fica no banco para o app
+  /// não precisar recalcular a distribuição da semana.
+  diaSemana         String
+  /// Quantas vezes esta sessão se repete na semana.
+  frequenciaSemanal Int
+  ordem             Int
+
+  fichaTreino FichaTreino       @relation(fields: [fichaTreinoId], references: [id], onDelete: Cascade)
+  exercicios  ExercicioSessao[]
+
+  @@index([fichaTreinoId])
+}
+
+/// Um exercício prescrito dentro da sessão — "Supino reto: 3 séries de 8-12".
+/// Uma linha por exercício, não por série: as 3 séries têm a mesma prescrição,
+/// e repetir a linha 3 vezes não acrescentaria informação.
+model ExercicioSessao {
+  id               String @id @default(uuid())
+  sessaoTreinoId   String
+  exercicioId      Int
+  /// Quantas séries fazer.
+  series           Int
+  /// Faixa, não número exato: "8-12".
+  repeticoes       String
+  descansoSegundos Int    @default(60)
+  ordem            Int
+
+  /// Carga da última vez que o usuário fez este exercício. Nasce NULL porque
+  /// ninguém prescreve peso: quem descobre a carga é o próprio usuário
+  /// treinando. Depois do primeiro treino registrado, o app pré-preenche com
+  /// este valor.
+  ultimoPesoKg Float?
+
+  sessaoTreino SessaoTreino @relation(fields: [sessaoTreinoId], references: [id], onDelete: Cascade)
+  exercicio    Exercicio    @relation(fields: [exercicioId], references: [id])
+
+  @@index([sessaoTreinoId])
+}
+
+// ---------------------------------------------------------------------------
+// Prescrição: ficha de alimentação
+//
+// FichaAlimentacao → Refeicao[] → ItemRefeicao[] → Alimento (catálogo TACO)
+// ---------------------------------------------------------------------------
+
+/// A dieta prescrita, com os números do CalculoService. Mesma regra de
+/// histórico da FichaTreino: a anterior é desativada, não apagada.
+model FichaAlimentacao {
+  id        String   @id @default(uuid())
+  usuarioId String
+  ativa     Boolean  @default(true)
+  criadaEm  DateTime @default(now())
+
+  /// Metabolismo que originou as metas (Mifflin-St Jeor × fator de atividade).
+  tmb  Int
+  tdee Int
+
+  caloriasAlvo Int
+  proteinaG    Int
+  carboidratoG Int
+  gorduraG     Int
+  metaAguaMl   Int @default(2000)
+
+  usuario   Usuario    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  refeicoes Refeicao[]
+
+  @@index([usuarioId, ativa])
+}
+
+model Refeicao {
+  id                 String @id @default(uuid())
+  fichaAlimentacaoId String
+  nome               String
+  /// Horário sugerido ("07:30").
+  horario            String
+  ordem              Int
+
+  /// Metas da refeição — a fatia do dia que cabe a ela.
+  kcal         Int
+  proteinaG    Int
+  carboidratoG Int
+  gorduraG     Int
+
+  fichaAlimentacao FichaAlimentacao @relation(fields: [fichaAlimentacaoId], references: [id], onDelete: Cascade)
+  itens            ItemRefeicao[]
+
+  @@index([fichaAlimentacaoId])
+}
+
+/// Um alimento da refeição, em gramas. O valor nutricional NÃO é copiado para
+/// cá: vem do catálogo pelo FK, senão a TACO ficaria duplicada e as duas
+/// cópias poderiam divergir.
+model ItemRefeicao {
+  id         String @id @default(uuid())
+  refeicaoId String
+  alimentoId Int
+  gramas     Float
+
+  refeicao Refeicao @relation(fields: [refeicaoId], references: [id], onDelete: Cascade)
+  alimento Alimento @relation(fields: [alimentoId], references: [id])
+
+  @@index([refeicaoId])
 }
 
 // ---------------------------------------------------------------------------
@@ -134,4 +309,9 @@ enum Objetivo {
   PERDER
   MANTER
   GANHAR
+}
+
+enum TipoRestricao {
+  ALIMENTAR
+  FISICA
 }
