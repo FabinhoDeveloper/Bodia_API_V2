@@ -1,0 +1,94 @@
+# Esteira de CI/CD: todo push na master e validado antes de virar producao.
+# Compila e roda os testes no runner do GitHub; so se os dois passarem entra por
+# SSH na EC2, atualiza o codigo, aplica as migrations e recarrega o PM2. Push que
+# quebra o build ou os testes para aqui, e a EC2 continua servindo a versao
+# anterior, intacta.
+name: CI/CD
+
+on:
+    push:
+        branches: [master]
+    # Permite republicar pelo botao "Run workflow" no GitHub, sem precisar de um
+    # commit vazio so para disparar o deploy.
+    workflow_dispatch:
+
+# Dois pushes seguidos nao podem rodar `npm ci` na mesma pasta da EC2 ao mesmo
+# tempo. cancel-in-progress fica false de proposito: cancelar um deploy no meio
+# (entre o migrate e o reload, por exemplo) e pior do que enfileirar.
+concurrency:
+    group: deploy-producao
+    cancel-in-progress: false
+
+jobs:
+    test:
+        name: Build e testes
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - name: Instalar dependencias
+              run: npm ci
+
+            # Precisa vir antes do build: src/config/prisma.ts e os repositories
+            # importam @prisma/client, e sem o client gerado o tsc nao acha os
+            # tipos. Nenhum teste toca o banco, entao nao ha Postgres aqui.
+            - name: Gerar o Prisma Client
+              run: npx prisma generate
+
+            - name: Compilar
+              run: npm run build
+
+            - name: Rodar os testes
+              run: npm test
+
+    deploy:
+        name: Publicar na EC2
+        needs: test
+        # Um workflow_dispatch disparado de outra branch valida, mas nao publica.
+        if: github.ref == 'refs/heads/master'
+        runs-on: ubuntu-latest
+
+        steps:
+            # So o script de deploy e necessario aqui — ele e enviado por stdin
+            # e executado na EC2, que busca o codigo por conta propria.
+            - uses: actions/checkout@v4
+
+            - name: Preparar a chave SSH
+              env:
+                  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+                  SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+              run: |
+                  mkdir -p ~/.ssh
+                  chmod 700 ~/.ssh
+                  printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+                  chmod 600 ~/.ssh/id_deploy
+                  # A chave publica do host vem de um secret, e nao de um
+                  # ssh-keyscan na hora: com o keyscan o CI aceitaria qualquer
+                  # chave que o outro lado apresentasse, o que anula a protecao
+                  # contra um host trocado.
+                  printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+                  chmod 644 ~/.ssh/known_hosts
+
+            - name: Conectar e publicar
+              env:
+                  SSH_HOST: ${{ secrets.SSH_HOST }}
+                  SSH_USER: ${{ secrets.SSH_USER }}
+                  APP_DIR: ${{ secrets.APP_DIR }}
+                  PM2_APP: ${{ vars.PM2_APP }}
+              run: |
+                  ssh -i ~/.ssh/id_deploy \
+                      -o BatchMode=yes \
+                      -o StrictHostKeyChecking=yes \
+                      "$SSH_USER@$SSH_HOST" \
+                      "APP_DIR='$APP_DIR' PM2_APP='$PM2_APP' bash -s" \
+                      < scripts/deploy.sh
+
+            - name: Limpar a chave
+              if: always()
+              run: rm -f ~/.ssh/id_deploy

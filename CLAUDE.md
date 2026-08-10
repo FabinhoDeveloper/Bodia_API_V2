@@ -155,6 +155,9 @@ backend/
     server.ts              # bootstrap: carrega .env e sobe o listener
   scripts/
     importar-taco.ts       # regenera src/data/alimentos.ts a partir da TACO
+    deploy.sh              # roteiro executado NA EC2 pelo GitHub Actions
+  .github/workflows/
+    deploy.yml             # esteira: build + testes -> SSH -> PM2
   tests/                   # espelha src/, só arquivos *.test.ts
   docker-compose.yml        # Postgres local (bodia/bodia/bodia, porta 5432)
   jest.config.js / tsconfig.jest.json
@@ -171,6 +174,76 @@ npm run dev                 # tsx watch — API em http://localhost:3333
 ```
 
 `GET /api/health` → `{ status: "ok", timestamp: ... }` confirma que a API está de pé.
+
+## Deploy (CI/CD)
+
+Todo push na `master` dispara `.github/workflows/deploy.yml`. A esteira tem dois jobs, e o segundo só existe se o primeiro passar:
+
+```
+push na master
+      │
+      ▼
+┌─ job: test (runner do GitHub) ─┐   falhou? ──► deploy não roda,
+│  npm ci                        │              a EC2 fica na versão antiga
+│  npx prisma generate           │
+│  npm run build   (tsc)         │
+│  npm test        (jest)        │
+└────────────────┬───────────────┘
+                 │ passou
+                 ▼
+┌─ job: deploy (needs: test) ─────────────────┐
+│  ssh <user>@<host> 'bash -s' < scripts/deploy.sh
+│      git fetch + reset --hard origin/master │
+│      npm ci                                 │
+│      npx prisma generate                    │
+│      npm run build                          │
+│      npx prisma migrate deploy              │
+│      pm2 reload <app> --update-env          │
+└─────────────────────────────────────────────┘
+```
+
+`npx prisma generate` aparece antes do build **nos dois lados** porque `src/config/prisma.ts` e os repositories importam `@prisma/client`: sem o client gerado, o `tsc` não acha os tipos e a compilação falha. Em compensação o job de teste **não precisa de um Postgres de serviço** — nenhum arquivo em `tests/` toca o banco, os repositories são sempre substituídos por fake. Se um dia um teste passar a exigir banco de verdade, é aqui que entra um `services: postgres` no workflow.
+
+O roteiro de deploy fica **versionado em `scripts/deploy.sh`** e é enviado por stdin (`bash -s`), não copiado para a máquina. Assim a EC2 executa a versão do script que veio junto do commit sendo publicado, e mudar o processo de deploy vira um commit revisável como qualquer outro.
+
+Três decisões desse script que não devem ser desfeitas sem pensar:
+
+- **`set -euo pipefail`** é o que torna o deploy seguro. Se `migrate deploy` falhar, o `pm2 reload` **não** acontece: o PM2 segue servindo o código antigo, que combina com o banco antigo. Sem o `-e`, o deploy seguiria em frente e subiria código esperando uma coluna que não existe.
+- **`git reset --hard origin/master`**, não `git pull`. Se a árvore do servidor tiver divergido, o `pull` abriria um conflito e o deploy travaria esperando um input que não existe numa sessão não interativa. O `.env` **não** é afetado — está no `.gitignore`, então é arquivo não rastreado e o reset não encosta nele. As credenciais de produção vivem só na máquina, nunca no repositório nem nos secrets do CI.
+- **`prisma migrate deploy`**, nunca `migrate dev`: só aplica as migrations pendentes, não gera migration nova nem reseta o banco. O `seed` **não** entra no deploy — mesmo sendo idempotente (`skipDuplicates`), popular catálogo é operação de instalação, não de publicação.
+
+O passo de SSH é escrito à mão em vez de usar um action de terceiro: são cinco linhas e evita entregar a chave de produção a um action externo. O `known_hosts` vem de um secret, e não de um `ssh-keyscan` na hora — com o keyscan o CI aceitaria qualquer chave que o outro lado apresentasse, o que anula a proteção contra um host trocado.
+
+### Secrets e variables do repositório
+
+Em **Settings → Secrets and variables → Actions**:
+
+| Nome | Tipo | Conteúdo |
+|---|---|---|
+| `SSH_HOST` | secret | IP elástico ou domínio da EC2 |
+| `SSH_USER` | secret | usuário do deploy (`ubuntu` numa AMI Ubuntu) |
+| `SSH_PRIVATE_KEY` | secret | chave privada dedicada ao CI, com as linhas `BEGIN`/`END` |
+| `SSH_KNOWN_HOSTS` | secret | saída de `ssh-keyscan <host>` |
+| `APP_DIR` | secret | caminho do clone na EC2 |
+| `PM2_APP` | **variable** | nome do processo no PM2 — não é segredo, fica em Variables |
+
+Gerar o par de chaves do CI (não reaproveitar o `.pem` da AWS, que dá acesso total e não pode ser revogado isoladamente):
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-bodia" -f ~/.ssh/bodia_ci -N ""
+ssh-copy-id -i ~/.ssh/bodia_ci.pub <user>@<host>
+cat ~/.ssh/bodia_ci     # → SSH_PRIVATE_KEY
+ssh-keyscan <host>      # → SSH_KNOWN_HOSTS
+```
+
+### Cuidados conhecidos
+
+- **O `tsc` roda na EC2 e consome memória.** Numa instância de 1 GB (`t2.micro`/`t3.micro`) o build pode ser morto pelo OOM killer — a pista é o job travar ou sair com `Killed`. Correção feita uma vez na máquina: 2 GB de swap (`fallocate` → `mkswap` → `swapon` → entrada no `/etc/fstab`).
+- **`npm ci` apaga `node_modules` com o processo antigo no ar.** O Node já carregou seus módulos em memória e continua respondendo, mas um crash exatamente nessa janela deixaria o PM2 reiniciando sem dependências no disco. É a contrapartida de publicar por `git pull`; eliminar isso exigiria deploy em diretórios versionados com symlink.
+- **`migrate deploy` não tem rollback.** Antes de publicar migration que remove coluna ou tabela, snapshot do volume/RDS.
+- **O repositório é público**, por isso o `git fetch` na EC2 funciona sem credencial. Se ele for fechado, o deploy quebra até uma deploy key ser instalada na máquina.
+
+Para publicar sem um commit novo (rollback manual, ou reexecutar um deploy que falhou por rede), use o botão **Run workflow** — o `workflow_dispatch` está habilitado. Disparado de outra branch, ele valida mas não publica.
 
 ## Como adicionar um recurso novo
 
