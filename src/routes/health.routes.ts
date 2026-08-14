@@ -1,10 +1,9 @@
 import { Router } from "express";
 
 import HealthController from "../controllers/HealthController";
-import HealthService from "../services/HealthService";
 
 const router = Router();
-const healthController = new HealthController(new HealthService());
+const healthController = new HealthController();
 
 router.get("/health", healthController.check);
 

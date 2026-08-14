@@ -1,19 +1,11 @@
 import { Request, Response } from "express";
 
-import HealthService from "../services/HealthService";
-
 /**
- * Ponte HTTP do health check (GET /api/health): chama o HealthService e
- * devolve o resultado como JSON. Não tem regra de negócio.
+ * Ponte HTTP do health check (GET /api/health): confirma que a API está de
+ * pé. Não tem regra de negócio, então não precisa de Service.
  */
 export default class HealthController {
-    private readonly healthService;
-
-    constructor(healthService: HealthService) {
-        this.healthService = healthService;
-    }
-
     check = (req: Request, res: Response) => {
-        res.json(this.healthService.check());
+        res.json({ status: "ok", timestamp: new Date().toISOString() });
     };
 }
