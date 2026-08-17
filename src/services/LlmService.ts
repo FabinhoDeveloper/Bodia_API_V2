@@ -1,5 +1,18 @@
 import OpenAI from "openai";
 
+export interface RespostaLlmComMetricas {
+    conteudo: string;
+    finishReason: string | null;
+    modelo: string;
+    respostaId: string;
+    // Objeto `usage` exatamente como o provider devolveu, sem filtrar pelos
+    // campos que a lib da OpenAI documenta — a DeepSeek já expõe campos que
+    // não existem no tipo oficial (ex.: prompt_cache_hit_tokens), e quem
+    // consome isto (BenchmarkGeracaoService) precisa ver o bruto.
+    usage: Record<string, unknown> | undefined;
+    llmMs: number;
+}
+
 /**
  * Cliente de IA do BodIA: fala com a DeepSeek (modelo configurado em
  * src/config/deepseek.ts, hoje deepseek-v4-pro) através do SDK da OpenAI, já
@@ -32,22 +45,17 @@ export default class LlmService {
     }
 
     /**
-     * Geração em JSON mode. A temperatura é baixa de propósito: a fundamentação
-     * teórica (4.2.3) trata a estocasticidade do LLM como problema em aplicações
-     * que exigem resultados reprodutíveis e auditáveis.
+     * Monta exatamente a mesma chamada chat.completions.create usada em
+     * produção (mesmo model, response_format, temperature, reasoning_effort,
+     * max_tokens e AbortSignal de timeout) e devolve a resposta crua da API.
+     *
+     * Extraído para existir um único lugar com estes parâmetros — gerarJson
+     * (produção) e gerarJsonComMetricas (benchmark, src/services/PlanoService
+     * .gerarComMetricas) chamam este mesmo método, então o benchmark nunca
+     * pode divergir silenciosamente do que o app realmente usa.
      */
-    async gerarJson(system: string, user: string): Promise<string> {
-        // Sem estes logs, o console fica em silencio por ~1 min entre "plano
-        // calculado" e o plano pronto, e nao da para distinguir "a IA esta
-        // trabalhando" de "o backend travou".
-        const caracteres = system.length + user.length;
-        console.log(
-            `[ia] conectando em ${this.model} — enviando prompt de ${caracteres} caracteres...`,
-        );
-
-        const inicio = Date.now();
-
-        const resposta = await this.criarClient().chat.completions.create(
+    private async criarChatCompletion(system: string, user: string) {
+        return this.criarClient().chat.completions.create(
             {
                 model: this.model,
                 messages: [
@@ -68,7 +76,7 @@ export default class LlmService {
                 // real é a dificuldade aritmética da tarefa (encaixar gramas de
                 // 591 alimentos até fechar 4 macros ao mesmo tempo), e o
                 // caminho é simplificar o problema, não ajustar este parâmetro.
-                reasoning_effort: "low",
+                reasoning_effort: "none",
                 // Os reasoning_tokens contam dentro deste limite.
                 max_tokens: 32000,
             },
@@ -77,6 +85,25 @@ export default class LlmService {
             // valendo durante a leitura do corpo, então é ele que de fato limita.
             { signal: AbortSignal.timeout(this.timeoutMs) },
         );
+    }
+
+    /**
+     * Geração em JSON mode. A temperatura é baixa de propósito: a fundamentação
+     * teórica (4.2.3) trata a estocasticidade do LLM como problema em aplicações
+     * que exigem resultados reprodutíveis e auditáveis.
+     */
+    async gerarJson(system: string, user: string): Promise<string> {
+        // Sem estes logs, o console fica em silencio por ~1 min entre "plano
+        // calculado" e o plano pronto, e nao da para distinguir "a IA esta
+        // trabalhando" de "o backend travou".
+        const caracteres = system.length + user.length;
+        console.log(
+            `[ia] conectando em ${this.model} — enviando prompt de ${caracteres} caracteres...`,
+        );
+
+        const inicio = Date.now();
+
+        const resposta = await this.criarChatCompletion(system, user);
 
         const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
         const uso = resposta.usage;
@@ -102,5 +129,28 @@ export default class LlmService {
         }
 
         return conteudo;
+    }
+
+    /**
+     * Mesma chamada de gerarJson (via criarChatCompletion — mesmos parâmetros
+     * de produção), mas para o endpoint de benchmark
+     * (src/services/BenchmarkGeracaoService.ts): não lança em resposta vazia
+     * — devolve conteudo="" e deixa quem investiga decidir o que fazer — e
+     * devolve as métricas cruas (usage, finish_reason, model, id) em vez de só
+     * o texto, porque gerarJson descarta tudo isso depois de logar.
+     */
+    async gerarJsonComMetricas(system: string, user: string): Promise<RespostaLlmComMetricas> {
+        const inicio = performance.now();
+        const resposta = await this.criarChatCompletion(system, user);
+        const llmMs = performance.now() - inicio;
+
+        return {
+            conteudo: resposta.choices[0]?.message?.content ?? "",
+            finishReason: resposta.choices[0]?.finish_reason ?? null,
+            modelo: resposta.model,
+            respostaId: resposta.id,
+            usage: resposta.usage as unknown as Record<string, unknown> | undefined,
+            llmMs,
+        };
     }
 }

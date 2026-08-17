@@ -59,6 +59,32 @@ export interface PerfilParaPlano {
 }
 
 /**
+ * Retorno de gerarComMetricas — usado só pelo endpoint de benchmark
+ * (src/services/BenchmarkGeracaoService.ts). `sucesso: false` significa que a
+ * chamada à IA em si falhou (erro de rede/timeout/API); um plano que voltou
+ * mas não passou no parse ou na validação ainda é `sucesso: true` — a
+ * chamada funcionou, o problema é o conteúdo, e é exatamente isso que o
+ * benchmark quer conseguir distinguir.
+ */
+export interface ResultadoBenchmarkGeracao {
+    sucesso: boolean;
+    prepMs: number;
+    llmMs: number;
+    caracteresPrompt: number;
+    modeloRespondido: string | null;
+    respostaId: string | null;
+    finishReason: string | null;
+    usage: Record<string, unknown> | undefined;
+    respostaCaracteres: number | null;
+    respostaBytes: number | null;
+    jsonValido: boolean;
+    validacaoOk: boolean | null;
+    validacao: Validacao | null;
+    plano: PlanoGerado | null;
+    erro: { tipo: string; mensagem: string } | null;
+}
+
+/**
  * Orquestra a geração do plano pela IA (chamado por OnboardingService, depois
  * que o CalculoService já produziu o ResultadoCalculo) e é o ponto onde a
  * resposta do modelo é conferida, nunca aceita de graça:
@@ -120,6 +146,119 @@ export default class PlanoService {
         const validacao = this.validarMacros(plano, alimentos, resultado);
 
         return { plano, validacao };
+    }
+
+    /**
+     * Mesmo caminho de gerar() — mesmo CatalogoService, mesmo PromptService,
+     * mesmas validações privadas (parsear/validarIds/validarMacros) — só troca
+     * llmService.gerarJson (que só devolve texto e lança em resposta vazia)
+     * por gerarJsonComMetricas (que devolve usage/finish_reason/model e nunca
+     * lança em resposta vazia). Não é chamado por gerar() nem pelo
+     * OnboardingService; existe só para o endpoint de benchmark
+     * (GET /api/teste-geracao, ver BenchmarkGeracaoService).
+     */
+    async gerarComMetricas(
+        perfil: PerfilParaPlano,
+        resultado: ResultadoCalculo,
+    ): Promise<ResultadoBenchmarkGeracao> {
+        const inicioPrep = performance.now();
+        const alimentos = this.catalogoService.filtrarAlimentos(perfil.restricoesAlimentares);
+        const exercicios = this.catalogoService.filtrarExercicios(
+            perfil.restricoesFisicas,
+            resultado.treino.sessoes.map((sessao) => sessao.nome),
+        );
+        const { system, user } = this.promptService.montar({
+            resultado,
+            alimentos,
+            exercicios,
+            restricoesAlimentares: perfil.restricoesAlimentares,
+            restricoesFisicas: perfil.restricoesFisicas,
+        });
+        const prepMs = performance.now() - inicioPrep;
+        const caracteresPrompt = system.length + user.length;
+
+        const inicioLlm = performance.now();
+        let llmResultado;
+        try {
+            llmResultado = await this.llmService.gerarJsonComMetricas(system, user);
+        } catch (erro) {
+            // Mesmo em erro/timeout, o tempo até a falha é justamente o dado
+            // que o benchmark quer capturar — não descartar aqui.
+            const llmMs = performance.now() - inicioLlm;
+            return {
+                sucesso: false,
+                prepMs,
+                llmMs,
+                caracteresPrompt,
+                modeloRespondido: null,
+                respostaId: null,
+                finishReason: null,
+                usage: undefined,
+                respostaCaracteres: null,
+                respostaBytes: null,
+                jsonValido: false,
+                validacaoOk: null,
+                validacao: null,
+                plano: null,
+                erro: {
+                    tipo: erro instanceof Error ? erro.constructor.name : "Erro",
+                    mensagem: erro instanceof Error ? erro.message : String(erro),
+                },
+            };
+        }
+
+        const { conteudo, usage, finishReason, modelo, respostaId, llmMs } = llmResultado;
+        const respostaCaracteres = conteudo.length;
+        const respostaBytes = Buffer.byteLength(conteudo, "utf8");
+
+        let jsonValido = false;
+        try {
+            JSON.parse(conteudo);
+            jsonValido = true;
+        } catch {
+            jsonValido = false;
+        }
+
+        let validacao: Validacao | null = null;
+        let validacaoOk: boolean | null = null;
+        let plano: PlanoGerado | null = null;
+        let erroValidacao: { tipo: string; mensagem: string } | null = null;
+
+        if (jsonValido) {
+            try {
+                // Atribui a `plano` antes de validarIds/validarMacros de propósito:
+                // se a validação de ids falhar (alucinação), o plano parseado ainda
+                // fica disponível na resposta do benchmark para inspeção.
+                plano = this.parsear(conteudo);
+                this.validarIds(plano, alimentos, exercicios);
+                validacao = this.validarMacros(plano, alimentos, resultado);
+                validacaoOk = validacao.dentroDoLimite;
+            } catch (erro) {
+                validacaoOk = false;
+                erroValidacao = {
+                    tipo: erro instanceof Error ? erro.constructor.name : "Erro",
+                    mensagem: erro instanceof Error ? erro.message : String(erro),
+                };
+            }
+        }
+
+        return {
+            sucesso: true,
+            prepMs,
+            llmMs,
+            caracteresPrompt,
+            modeloRespondido: modelo,
+            respostaId,
+            finishReason,
+            usage,
+            respostaCaracteres,
+            respostaBytes,
+            jsonValido,
+            validacaoOk,
+            validacao,
+            plano,
+            erro: erroValidacao,
+        };
     }
 
     private parsear(resposta: string): PlanoGerado {

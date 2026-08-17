@@ -13,7 +13,7 @@ let client: OpenAI | null = null;
 // gerar — uma chamada já durou 328s com este teto em 180s. Por isso o
 // LlmService também passa um AbortSignal por requisição, que continua valendo
 // durante a leitura do corpo.
-export const deepseekTimeoutMs = 180000;
+export const deepseekTimeoutMs = 1800000000;
 
 // O SDK repete a chamada 2x por padrão. Numa requisição de ~2 min que consome
 // crédito, repetir automaticamente triplica custo e espera — falhar rápido e

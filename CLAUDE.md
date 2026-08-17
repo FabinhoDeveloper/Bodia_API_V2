@@ -62,19 +62,19 @@ export default class UserService {
 Faz a ponte HTTP ↔ Service: lê `req`, chama o Service, escreve `res`. Não contém regra de negócio. Métodos que viram handler de rota são **arrow function properties** (garante o `this` correto quando passados direto pro Express, sem precisar de `.bind`).
 
 ```ts
-// src/controllers/HealthController.ts
+// exemplo ilustrativo do padrão — não corresponde a um arquivo real
 import { Request, Response } from "express";
-import HealthService from "../services/HealthService";
+import ExemploService from "../services/ExemploService";
 
-export default class HealthController {
-    private readonly healthService;
+export default class ExemploController {
+    private readonly exemploService;
 
-    constructor(healthService: HealthService) {
-        this.healthService = healthService;
+    constructor(exemploService: ExemploService) {
+        this.exemploService = exemploService;
     }
 
     check = (req: Request, res: Response) => {
-        res.json(this.healthService.check());
+        res.json(this.exemploService.check());
     };
 }
 ```
@@ -84,15 +84,15 @@ export default class HealthController {
 Um arquivo `<recurso>.routes.ts` por recurso. Monta a cadeia de dependências (repository → service → controller) e registra os endpoints. `src/routes/index.ts` agrega todos os routers de recurso e é montado em `/api` no `app.ts`.
 
 ```ts
-// src/routes/health.routes.ts
+// exemplo ilustrativo do padrão — não corresponde a um arquivo real
 import { Router } from "express";
-import HealthController from "../controllers/HealthController";
-import HealthService from "../services/HealthService";
+import ExemploController from "../controllers/ExemploController";
+import ExemploService from "../services/ExemploService";
 
 const router = Router();
-const healthController = new HealthController(new HealthService());
+const exemploController = new ExemploController(new ExemploService());
 
-router.get("/health", healthController.check);
+router.get("/exemplo", exemploController.check);
 
 export default router;
 ```
@@ -172,8 +172,6 @@ npm install
 npm run prisma:generate     # gera o client a partir do schema.prisma
 npm run dev                 # tsx watch — API em http://localhost:3333
 ```
-
-`GET /api/health` → `{ status: "ok", timestamp: ... }` confirma que a API está de pé.
 
 ## Deploy (CI/CD)
 
@@ -320,7 +318,6 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 
 | Método | Rota | O que faz |
 |---|---|---|
-| `GET` | `/api/health` | Health check — confirma que a API está de pé. |
 | `POST` | `/api/onboarding` | Recebe `{ conta, perfil }`, calcula o plano determinístico, gera treino e dieta com a IA e **imprime no console** o plano calculado, o plano gerado e a conferência dos macros. Responde `{ recebido: true }` — o plano ainda não vai na resposta nem é persistido. **400** se o `perfil` faltar ou for inválido; **500** se a IA falhar. Leva ~2 min. |
 
 ## Próximos passos (fora do escopo desta etapa)
