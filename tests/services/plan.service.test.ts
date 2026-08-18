@@ -1,0 +1,352 @@
+import NaoEncontradoError from "../../src/errors/NaoEncontradoError";
+import ValidationError from "../../src/errors/ValidationError";
+import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
+import MeuPlanoMapper from "../../src/mappers/meu-plano.mapper";
+import PlanoMapper from "../../src/mappers/plano.mapper";
+import PlanRepository from "../../src/repositories/plan.repository";
+import EngineService from "../../src/services/engine.service";
+import PlanService from "../../src/services/plan.service";
+import { OnboardingRequest, PlanoValidado } from "../../src/types/plano.types";
+
+function cadastroBase(overrides: Partial<OnboardingRequest> = {}): OnboardingRequest {
+    return {
+        conta: { nome: "Ana", sobrenome: "Silva", email: "a@b.com", senha: "12345678" },
+        perfil: {
+            sexo: "F",
+            dataNascimento: "1998-04-10",
+            peso: 65,
+            altura: 165,
+            percentualGordura: 20,
+            nivelAtividade: "moderado",
+            nivelExperiencia: "iniciante",
+            objetivo: "perder",
+            diasPorSemana: 4,
+            restricoesAlimentares: ["Lactose"],
+            restricoesFisicas: [],
+        },
+        ...overrides,
+    };
+}
+
+const PLANO_FAKE: PlanoValidado = {
+    plano: {
+        dieta: {
+            refeicoes: [
+                { nome: "Almoço", itens: [{ alimentoId: 3, nome: "Arroz, tipo 1, cozido", gramas: 150 }] },
+            ],
+        },
+        treino: {
+            sessoes: [
+                {
+                    nome: "Upper",
+                    exercicios: [
+                        { exercicioId: 1, nome: "Supino reto com barra", series: 4, repeticoes: "8-10" },
+                    ],
+                },
+            ],
+        },
+    },
+    validacao: {
+        calorias: { meta: 1711, obtido: 1700, desvioPercentual: -0.6 },
+        proteina: { meta: 140, obtido: 139, desvioPercentual: -0.7 },
+        carboidrato: { meta: 181, obtido: 180, desvioPercentual: -0.6 },
+        gordura: { meta: 48, obtido: 48, desvioPercentual: 0 },
+        dentroDoLimite: true,
+    },
+};
+
+// A IA nunca é chamada de verdade nos testes: gastaria crédito e deixaria a suíte
+// dependente de rede.
+function planoServiceFake(gerar = jest.fn().mockResolvedValue(PLANO_FAKE)) {
+    return { gerar } as unknown as PlanoIaGenerator & { gerar: jest.Mock };
+}
+
+function repositoryFake(retorno: unknown) {
+    return {
+        buscarPlanoAtivo: jest.fn().mockResolvedValue(retorno),
+    } as unknown as PlanRepository & { buscarPlanoAtivo: jest.Mock };
+}
+
+/** PlanService montado para exercitar `gerar` — a leitura não é usada aqui. */
+function servicoDeGeracao(gerador = planoServiceFake()) {
+    return new PlanService(
+        new EngineService(),
+        gerador,
+        new PlanoMapper(),
+        repositoryFake(null),
+        new MeuPlanoMapper(),
+    );
+}
+
+/** PlanService montado para exercitar `consultar` — a geração não é usada aqui. */
+function servicoDeConsulta(retorno: unknown) {
+    const repository = repositoryFake(retorno);
+
+    return {
+        repository,
+        service: new PlanService(
+            new EngineService(),
+            planoServiceFake(),
+            new PlanoMapper(),
+            repository,
+            new MeuPlanoMapper(),
+        ),
+    };
+}
+
+describe("PlanService", () => {
+    const engineService = new EngineService();
+
+    let logSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+        logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        logSpy.mockRestore();
+    });
+
+    // A resposta agora carrega o plano: é dela que a PlanoResumoScreen se
+    // alimenta, em vez dos mocks que o app tinha embutidos.
+    it("devolve o plano no formato que o app consome", async () => {
+        const planService = servicoDeGeracao();
+        const cadastro = cadastroBase();
+
+        const { plano } = await planService.gerar(cadastro);
+        const esperado = engineService.calcular(cadastro.perfil!);
+
+        expect(plano.metas.calorias).toBe(esperado.meta.caloriasAlvo);
+        expect(plano.metas.proteinaG).toBe(esperado.macros.proteina.g);
+        expect(plano.treino.split).toBe(esperado.treino.split);
+        expect(plano.dieta.refeicoes[0].horario).toBeTruthy();
+        expect(plano.treino.sessoes[0].gruposMusculares).toBeTruthy();
+    });
+
+    it("registra no console o plano calculado, não o payload recebido", async () => {
+        const planService = servicoDeGeracao();
+        const cadastro = cadastroBase();
+
+        await planService.gerar(cadastro);
+
+        const [rotulo, corpo] = logSpy.mock.calls[0];
+        expect(rotulo).toBe("[onboarding] plano calculado:");
+        expect(JSON.parse(corpo)).toEqual(engineService.calcular(cadastro.perfil!));
+    });
+
+    it("não expõe dados da conta no log", async () => {
+        const planService = servicoDeGeracao();
+
+        await planService.gerar(cadastroBase());
+
+        const tudoQueFoiLogado = logSpy.mock.calls.flat().join(" ");
+        expect(tudoQueFoiLogado).not.toContain("12345678");
+        expect(tudoQueFoiLogado).not.toContain("a@b.com");
+    });
+
+    it("gera o plano com a IA e registra o plano e a conferência dos macros", async () => {
+        const planoIaGenerator = planoServiceFake();
+        const planService = servicoDeGeracao(planoIaGenerator);
+        const cadastro = cadastroBase();
+
+        await planService.gerar(cadastro);
+
+        expect(planoIaGenerator.gerar).toHaveBeenCalledWith(
+            cadastro.perfil,
+            engineService.calcular(cadastro.perfil!),
+        );
+        expect(logSpy.mock.calls[1][0]).toBe("[onboarding] conferência dos macros:");
+        expect(logSpy.mock.calls[2][0]).toBe("[onboarding] plano enviado ao app:");
+    });
+
+    it("propaga a falha da IA em vez de engolir o erro", async () => {
+        const planoIaGenerator = planoServiceFake(jest.fn().mockRejectedValue(new Error("401 Unauthorized")));
+        const planService = servicoDeGeracao(planoIaGenerator);
+
+        await expect(planService.gerar(cadastroBase())).rejects.toThrow(
+            "401 Unauthorized",
+        );
+    });
+
+    it("rejeita cadastro sem perfil (não há como calcular o plano)", async () => {
+        const planoIaGenerator = planoServiceFake();
+        const planService = servicoDeGeracao(planoIaGenerator);
+        const cadastro = cadastroBase({ perfil: null });
+
+        await expect(planService.gerar(cadastro)).rejects.toThrow(ValidationError);
+        await expect(planService.gerar(cadastro)).rejects.toThrow(
+            "perfil é obrigatório para gerar o plano",
+        );
+        expect(planoIaGenerator.gerar).not.toHaveBeenCalled();
+    });
+
+    it("propaga como ValidationError o erro de validação do EngineService", async () => {
+        const planoIaGenerator = planoServiceFake();
+        const planService = servicoDeGeracao(planoIaGenerator);
+        const cadastro = cadastroBase();
+        cadastro.perfil!.diasPorSemana = 9;
+
+        await expect(planService.gerar(cadastro)).rejects.toThrow(ValidationError);
+        await expect(planService.gerar(cadastro)).rejects.toThrow(
+            "diasPorSemana deve ser um inteiro entre 2 e 6",
+        );
+        expect(planoIaGenerator.gerar).not.toHaveBeenCalled();
+    });
+});
+
+// Vinha de PlanoConsultaService, absorvido por PlanService.consultar — o
+// shaping em si agora mora em MeuPlanoMapper, mas o comportamento observável
+// é o mesmo e continua sendo verificado pela porta do service.
+describe("PlanService.consultar", () => {
+    function usuarioNoBanco(overrides: Record<string, unknown> = {}) {
+        return {
+            nome: "Ana",
+            sobrenome: "Silva",
+            email: "ana@teste.com",
+            alturaCm: 165,
+            objetivo: "PERDER",
+            // Vem ordenado desc e limitado a 1 pelo repository: o peso atual.
+            pesos: [{ pesoKg: 64 }],
+            fichasTreino: [
+                {
+                    split: "Upper / Lower",
+                    diasPorSemana: 4,
+                    sessoes: [
+                        {
+                            id: "s1",
+                            nome: "Upper",
+                            diaSemana: "Segunda",
+                            exercicios: [
+                                {
+                                    id: "e1",
+                                    exercicioId: 1,
+                                    series: 3,
+                                    repeticoes: "8-12",
+                                    descansoSegundos: 90,
+                                    ultimoPesoKg: null,
+                                    exercicio: {
+                                        nome: "Supino reto com barra",
+                                        grupoMuscular: "Peito",
+                                    },
+                                },
+                                {
+                                    id: "e2",
+                                    exercicioId: 17,
+                                    series: 3,
+                                    repeticoes: "8-12",
+                                    descansoSegundos: 90,
+                                    ultimoPesoKg: 40,
+                                    exercicio: {
+                                        nome: "Puxada frente na polia",
+                                        grupoMuscular: "Costas",
+                                    },
+                                },
+                                {
+                                    id: "e3",
+                                    exercicioId: 20,
+                                    series: 3,
+                                    repeticoes: "8-12",
+                                    descansoSegundos: 90,
+                                    ultimoPesoKg: null,
+                                    // Mesmo grupo do anterior: não pode duplicar no resumo.
+                                    exercicio: { nome: "Remada curvada", grupoMuscular: "Costas" },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            fichasAlimentacao: [
+                {
+                    caloriasAlvo: 1711,
+                    proteinaG: 140,
+                    carboidratoG: 181,
+                    gorduraG: 48,
+                    metaAguaMl: 2000,
+                    refeicoes: [
+                        {
+                            id: "r1",
+                            nome: "Almoço",
+                            horario: "12:30",
+                            kcal: 599,
+                            proteinaG: 49,
+                            carboidratoG: 63,
+                            gorduraG: 17,
+                            itens: [
+                                {
+                                    alimentoId: 3,
+                                    gramas: 150,
+                                    alimento: { nome: "Arroz, tipo 1, cozido", kcal: 128.26 },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            ...overrides,
+        };
+    }
+
+    it("usa o registro mais recente como peso atual", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        const plano = await service.consultar("usuario-1");
+
+        expect(plano.usuario.pesoAtualKg).toBe(64);
+        expect(plano.usuario.nome).toBe("Ana");
+    });
+
+    it("traz nome e grupo muscular do catálogo, não da ficha", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        const exercicio = (await service.consultar("usuario-1")).treino.sessoes[0].exercicios[0];
+
+        expect(exercicio.nome).toBe("Supino reto com barra");
+        expect(exercicio.grupoMuscular).toBe("Peito");
+        expect(exercicio.ultimoPesoKg).toBeNull();
+    });
+
+    // O resumo é o subtítulo do card: repetir "Costas" duas vezes ficaria feio.
+    it("resume os grupos musculares da sessão sem repetir", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        expect((await service.consultar("usuario-1")).treino.sessoes[0].gruposMusculares).toBe(
+            "Peito, Costas",
+        );
+    });
+
+    it("calcula as kcal do item pela TACO e pelas gramas", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        // 128.26 kcal/100g × 150g = 192
+        expect((await service.consultar("usuario-1")).dieta.refeicoes[0].itens[0].kcal).toBe(192);
+    });
+
+    it("devolve as metas da ficha de alimentação", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        expect((await service.consultar("usuario-1")).dieta.metas).toEqual({
+            calorias: 1711,
+            proteinaG: 140,
+            carboidratoG: 181,
+            gorduraG: 48,
+            aguaMl: 2000,
+        });
+    });
+
+    it.each([
+        ["usuário inexistente", null],
+        ["usuário sem ficha de treino ativa", usuarioNoBanco({ fichasTreino: [] })],
+        ["usuário sem ficha de alimentação ativa", usuarioNoBanco({ fichasAlimentacao: [] })],
+    ])("recusa %s", async (_caso, retorno) => {
+        const { service } = servicoDeConsulta(retorno);
+
+        await expect(service.consultar("usuario-1")).rejects.toThrow(NaoEncontradoError);
+    });
+
+    it("tolera usuário sem nenhum registro de peso", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco({ pesos: [] }));
+
+        expect((await service.consultar("usuario-1")).usuario.pesoAtualKg).toBeNull();
+    });
+});

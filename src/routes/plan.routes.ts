@@ -1,15 +1,18 @@
 import { Router } from "express";
 
 import { deepseekModel, deepseekTimeoutMs, getDeepseekClient, simularIa } from "../config/deepseek";
-import OnboardingController from "../controllers/OnboardingController";
-import EngineService from "../services/engine.service";
-import CatalogoFilter from "../prompts/catalogo.filter";
-import AiService from "../services/ai.service";
-import OnboardingService from "../services/OnboardingService";
-import PlanoMapper from "../mappers/plano.mapper";
+import prismaClient from "../config/prisma";
+import PlanController from "../controllers/plan.controller";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
 import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
+import MeuPlanoMapper from "../mappers/meu-plano.mapper";
+import PlanoMapper from "../mappers/plano.mapper";
+import CatalogoFilter from "../prompts/catalogo.filter";
 import PlanoPrompt from "../prompts/plano.prompt";
+import PlanRepository from "../repositories/plan.repository";
+import AiService from "../services/ai.service";
+import EngineService from "../services/engine.service";
+import PlanService from "../services/plan.service";
 import { GeradorDePlano } from "../types/plano.types";
 
 const router = Router();
@@ -27,10 +30,17 @@ const geradorDePlano: GeradorDePlano = simularIa
 
 console.log(`[onboarding] gerador de plano: ${simularIa ? "SIMULADO (fixture)" : "IA"}`);
 
-const onboardingController = new OnboardingController(
-    new OnboardingService(new EngineService(), geradorDePlano, new PlanoMapper()),
+const planController = new PlanController(
+    new PlanService(
+        new EngineService(),
+        geradorDePlano,
+        new PlanoMapper(),
+        new PlanRepository(prismaClient),
+        new MeuPlanoMapper(),
+    ),
 );
 
-router.post("/onboarding", onboardingController.receber);
+router.post("/onboarding", planController.gerar);
+router.get("/plano/:usuarioId", planController.buscar);
 
 export default router;

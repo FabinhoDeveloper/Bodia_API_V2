@@ -1,35 +1,29 @@
-import NaoEncontradoError from "../errors/NaoEncontradoError";
 import PlanRepository from "../repositories/plan.repository";
 import { MeuPlano } from "../types/plano.types";
 
+/** O usuário como o PlanRepository o devolve, já com as fichas incluídas. */
+type UsuarioComPlano = NonNullable<Awaited<ReturnType<PlanRepository["buscarPlanoAtivo"]>>>;
+
+type FichaTreino = UsuarioComPlano["fichasTreino"][number];
+type FichaAlimentacao = UsuarioComPlano["fichasAlimentacao"][number];
+
 /**
- * Monta o plano ativo no formato que as telas principais consomem — Home,
- * Treino, Dieta e Perfil, numa resposta só.
+ * Converte o que veio do banco no formato que as telas principais consomem —
+ * Home, Treino, Dieta e Perfil, numa resposta só.
  *
- * Só devolve a PRESCRIÇÃO. O que o usuário registrou (água do dia, refeição
+ * Só monta a PRESCRIÇÃO. O que o usuário registrou (água do dia, refeição
  * marcada, treino concluído) ainda não é persistido e continua local no app.
+ *
+ * Fica aqui, e não no PlanService, porque é o mesmo tipo de trabalho do
+ * plano.mapper — traduzir entre o formato interno e o contrato da API —, só
+ * que na direção da leitura.
  */
-export default class PlanoConsultaService {
-    private readonly planRepository;
-
-    constructor(planRepository: PlanRepository) {
-        this.planRepository = planRepository;
-    }
-
-    async buscar(usuarioId: string): Promise<MeuPlano> {
-        const usuario = await this.planRepository.buscarPlanoAtivo(usuarioId);
-
-        if (!usuario) {
-            throw new NaoEncontradoError("Usuário não encontrado");
-        }
-
-        const fichaTreino = usuario.fichasTreino[0];
-        const fichaAlimentacao = usuario.fichasAlimentacao[0];
-
-        if (!fichaTreino || !fichaAlimentacao) {
-            throw new NaoEncontradoError("Usuário ainda não tem um plano ativo");
-        }
-
+export default class MeuPlanoMapper {
+    montar(
+        usuario: UsuarioComPlano,
+        fichaTreino: FichaTreino,
+        fichaAlimentacao: FichaAlimentacao,
+    ): MeuPlano {
         return {
             usuario: {
                 nome: usuario.nome,
@@ -61,7 +55,9 @@ export default class PlanoConsultaService {
                         // Derivado dos exercícios, sem repetir — é o subtítulo do
                         // card. Não é coluna no banco justamente para não poder
                         // contradizer a lista.
-                        gruposMusculares: [...new Set(exercicios.map((e) => e.grupoMuscular))].join(", "),
+                        gruposMusculares: [
+                            ...new Set(exercicios.map((e) => e.grupoMuscular)),
+                        ].join(", "),
                         exercicios,
                     };
                 }),
