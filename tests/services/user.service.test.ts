@@ -59,6 +59,7 @@ function cadastroBase(overrides: Partial<CadastroRequest> = {}): CadastroRequest
             nivelExperiencia: "iniciante",
             objetivo: "perder",
             diasPorSemana: 4,
+            numeroRefeicoes: 4,
             restricoesAlimentares: ["Lactose"],
             restricoesFisicas: ["Joelho"],
         },

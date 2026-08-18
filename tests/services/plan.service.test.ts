@@ -21,6 +21,7 @@ function cadastroBase(overrides: Partial<OnboardingRequest> = {}): OnboardingReq
             nivelExperiencia: "iniciante",
             objetivo: "perder",
             diasPorSemana: 4,
+            numeroRefeicoes: 4,
             restricoesAlimentares: ["Lactose"],
             restricoesFisicas: [],
         },

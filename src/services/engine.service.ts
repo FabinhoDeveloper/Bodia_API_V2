@@ -49,42 +49,46 @@ export default class EngineService {
 
     private static readonly GORDURA_PERCENTUAL_KCAL = 0.25; // meio da faixa ISSN 20-35% (Jäger et al. 2017)
 
-    // Usado quando o app não informa quantas refeições o usuário faz por dia.
-    private static readonly REFEICOES_PADRAO = 4;
-
-    // Nome e fatia do total diário de cada refeição. A fundamentação teórica não
-    // fixa distribuição por refeição — estes percentuais são parâmetro de
-    // engenharia, seguindo a prática usual de concentrar no almoço.
+    // Nome e fatia do total diário de cada refeição, para cada quantidade que o
+    // usuário pode escolher no onboarding. A fundamentação teórica não fixa
+    // distribuição por refeição — estes percentuais são parâmetro de engenharia,
+    // seguindo a prática usual de concentrar no almoço. Cada linha soma 100%.
     //
-    // Existem para dar ao LLM uma meta pequena por refeição em vez do total do
-    // dia: dividir um problema de 4 restrições em N problemas menores reduz
-    // drasticamente o raciocínio que ele gasta tentando fechar as contas.
+    // Quem escolhe a QUANTIDADE é o usuário; quem decide a REPARTIÇÃO é esta
+    // tabela. Nenhum dos dois é decisão do LLM: ele recebe as metas já prontas.
+    //
+    // Existem também para dar ao LLM uma meta pequena por refeição em vez do
+    // total do dia: dividir um problema de 4 restrições em N problemas menores
+    // reduz drasticamente o raciocínio que ele gasta tentando fechar as contas.
+    //
+    // Os nomes precisam continuar batendo com HORARIO_POR_REFEICAO, em
+    // mappers/plano.mapper.ts — é por eles que o horário sugerido é casado.
     private static readonly DISTRIBUICAO_REFEICOES: Record<number, [string, number][]> = {
         3: [
-            ["Café da manhã", 0.3],
+            ["Café da manhã", 0.25],
             ["Almoço", 0.4],
-            ["Jantar", 0.3],
+            ["Jantar", 0.35],
         ],
         4: [
-            ["Café da manhã", 0.25],
+            ["Café da manhã", 0.2],
             ["Almoço", 0.35],
             ["Lanche da tarde", 0.15],
-            ["Jantar", 0.25],
+            ["Jantar", 0.3],
         ],
         5: [
             ["Café da manhã", 0.2],
             ["Lanche da manhã", 0.1],
-            ["Almoço", 0.3],
-            ["Lanche da tarde", 0.15],
+            ["Almoço", 0.35],
+            ["Lanche da tarde", 0.1],
             ["Jantar", 0.25],
         ],
         6: [
             ["Café da manhã", 0.2],
             ["Lanche da manhã", 0.1],
-            ["Almoço", 0.28],
-            ["Lanche da tarde", 0.12],
-            ["Jantar", 0.22],
-            ["Ceia", 0.08],
+            ["Almoço", 0.3],
+            ["Lanche da tarde", 0.1],
+            ["Jantar", 0.2],
+            ["Ceia", 0.1],
         ],
     };
 
@@ -154,10 +158,9 @@ export default class EngineService {
             throw new ValidationError("diasPorSemana deve ser um inteiro entre 2 e 6");
         }
         if (
-            perfil.numeroRefeicoes !== undefined &&
-            (!Number.isInteger(perfil.numeroRefeicoes) ||
-                perfil.numeroRefeicoes < 3 ||
-                perfil.numeroRefeicoes > 6)
+            !Number.isInteger(perfil.numeroRefeicoes) ||
+            perfil.numeroRefeicoes < 3 ||
+            perfil.numeroRefeicoes > 6
         ) {
             throw new ValidationError("numeroRefeicoes deve ser um inteiro entre 3 e 6");
         }
@@ -258,7 +261,7 @@ export default class EngineService {
         meta: ResultadoCalculo["meta"],
         macros: ResultadoCalculo["macros"],
     ): ResultadoCalculo["dieta"] {
-        const numeroRefeicoes = perfil.numeroRefeicoes ?? EngineService.REFEICOES_PADRAO;
+        const numeroRefeicoes = perfil.numeroRefeicoes;
         const distribuicao = EngineService.DISTRIBUICAO_REFEICOES[numeroRefeicoes];
 
         const restante = {

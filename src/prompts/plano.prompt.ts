@@ -61,13 +61,14 @@ Estes limites vêm da literatura científica e explicam os valores que você rec
 
 ## Como montar a dieta
 
-- O que vale é o TOTAL DO DIA. As calorias sugeridas por refeição são só uma orientação de como distribuir ao longo do dia — não precisa fechar cada refeição no número exato.
+- Monte EXATAMENTE as refeições listadas, na mesma ordem e com o nome exato de cada uma. Não crie, não junte e não remova refeição.
+- Cada refeição tem a sua própria meta de calorias e de macronutrientes. Aproxime-se dela: é a divisão do dia que o motor determinístico já calculou a partir de quantas refeições o usuário declarou fazer.
 - Cada item precisa de: alimentoId (da lista), nome e quantidade em gramas.
 - Os valores da lista são por 100 g. Um alimento com 124 kcal por 100 g em 150 g contribui com 186 kcal.
 - Use 3 a 5 alimentos por refeição, em gramas redondas (50, 100, 120, 150...).
 - Monte refeições realistas para o Brasil: combine fontes de proteína, carboidrato, gordura e vegetais, e respeite o horário (não coloque feijão no café da manhã).
 
-IMPORTANTE SOBRE PRECISÃO: uma diferença de até 5% no total do dia é perfeitamente aceitável. NÃO gaste esforço procurando a combinação matematicamente perfeita — faça uma escolha razoável de alimentos e porções e siga em frente. Uma estimativa boa e rápida vale mais que uma busca exaustiva.
+IMPORTANTE SOBRE PRECISÃO: uma diferença de até 5% na meta de cada refeição, e no total do dia, é perfeitamente aceitável. NÃO gaste esforço procurando a combinação matematicamente perfeita — faça uma escolha razoável de alimentos e porções e siga em frente. Uma estimativa boa e rápida vale mais que uma busca exaustiva.
 
 ## Como montar o treino
 
@@ -138,9 +139,14 @@ META DE PROTEÍNA: ${macros.proteina.g} g (${macros.proteina.kcal} kcal)
 META DE CARBOIDRATO: ${macros.carboidrato.g} g (${macros.carboidrato.kcal} kcal)
 META DE GORDURA: ${macros.gordura.g} g (${macros.gordura.kcal} kcal)
 
-# Refeições do dia (calorias sugeridas, apenas para orientar a distribuição)
+# Refeições do dia (${dieta.numeroRefeicoes} refeições — use estes nomes e esta divisão)
 
-${dieta.refeicoes.map((r) => `${r.nome}: ~${r.kcal} kcal`).join("\n")}
+${dieta.refeicoes
+    .map(
+        (r) =>
+            `${r.nome}: ${r.kcal} kcal | proteína ${r.proteina} g | carboidrato ${r.carboidrato} g | gordura ${r.gordura} g`,
+    )
+    .join("\n")}
 
 Divisão de treino: ${treino.split}
 Dias de treino por semana: ${treino.diasPorSemana}

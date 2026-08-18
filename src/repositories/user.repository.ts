@@ -71,7 +71,7 @@ export default class UserRepository {
                 nivelExperiencia: this.perfilMapper.nivelExperiencia(perfil.nivelExperiencia),
                 objetivo: this.perfilMapper.objetivo(perfil.objetivo),
                 diasPorSemana: perfil.diasPorSemana,
-                numeroRefeicoes: perfil.numeroRefeicoes ?? 4,
+                numeroRefeicoes: perfil.numeroRefeicoes,
 
                 // O peso informado no onboarding é o primeiro ponto do histórico.
                 pesos: { create: [{ pesoKg: perfil.peso }] },

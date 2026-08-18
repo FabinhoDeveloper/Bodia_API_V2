@@ -94,6 +94,9 @@ model Usuario {
   nivelExperiencia  NivelExperiencia
   objetivo          Objetivo
   diasPorSemana     Int
+  /// Quantas refeições o usuário faz por dia (3 a 6), escolhido no onboarding.
+  /// O default só cobre as linhas gravadas antes da pergunta existir — o código
+  /// sempre informa o valor.
   numeroRefeicoes   Int              @default(4)
 
   criadoEm     DateTime @default(now())

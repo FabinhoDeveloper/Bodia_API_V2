@@ -340,6 +340,21 @@ Se a lógica nova é tradução de formato, construção de prompt ou uma estrat
 
 Consumido por `plan.service` (gerar), `user.service` (recalcular no cadastro) e pelo benchmark. Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
 
+### Distribuição por refeição
+
+`numeroRefeicoes` (inteiro **de 3 a 6**, obrigatório no `PerfilInput`) é escolhido pelo usuário no onboarding e diz em quantas partes o dia é dividido. Como cada parte é dividida está em `DISTRIBUICAO_REFEICOES`, uma tabela fixa no `engine.service`:
+
+| Refeições | Distribuição |
+|---|---|
+| 3 | Café 25% · Almoço 40% · Jantar 35% |
+| 4 | Café 20% · Almoço 35% · Lanche da tarde 15% · Jantar 30% |
+| 5 | Café 20% · Lanche manhã 10% · Almoço 35% · Lanche tarde 10% · Jantar 25% |
+| 6 | Café 20% · Lanche manhã 10% · Almoço 30% · Lanche tarde 10% · Jantar 20% · Ceia 10% |
+
+A quantidade é do usuário, a repartição é da tabela — **nenhuma das duas é decisão do LLM**, que recebe kcal e os três macros já prontos por refeição. A última refeição do dia recebe o *restante* em vez do seu percentual, para a soma das partes fechar exatamente o total do dia sem o centavo perdido no arredondamento de cada fatia.
+
+Os nomes precisam continuar batendo com `HORARIO_POR_REFEICAO` (`mappers/plano.mapper.ts`), que é quem casa o horário sugerido, e com `DISTRIBUICAO_TEXT` na tela `OnboardingRefeicoesScreen` do mobile, que mostra os percentuais ao usuário.
+
 ## Geração do plano pela IA
 
 O fluxo completo de `POST /api/onboarding` é:
@@ -369,7 +384,7 @@ Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso ne
 ### `plano.prompt.ts` — as três técnicas da fundamentação teórica (4.5.2)
 
 1. **System prompt**: contrato de papel — o modelo é redator, proibido de recalcular, arredondar ou "corrigir" qualquer valor recebido, e de citar item fora das listas.
-2. **Context injection**: valores do `engine.service` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`).
+2. **Context injection**: valores do `engine.service` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`). Inclui a meta completa (kcal + 3 macros) de **cada refeição**, com os nomes que o modelo deve usar — ver "Distribuição por refeição".
 3. **Few-shot**: exemplo do JSON de saída. A palavra "json" e o exemplo são **requisito do JSON mode da DeepSeek**, não escolha estética.
 
 O system prompt cita a literatura que embasa cada limite (Pelland 2024, Schoenfeld 2016, ISSN/Jäger 2017, Stokes 2018, Kerksick 2017, Mifflin 1990). Isso não é enfeite acadêmico: explicar *por que* o número é aquele reduz a tentativa do modelo de "melhorar" o valor recebido — a alucinação de fidelidade de Zhang et al. (2024).
@@ -404,7 +419,7 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
-| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano }` com metas, treino e dieta prontos para a tela. Nada é persistido. | **400** perfil ausente ou inválido; **500** se a IA falhar |
+| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano }` com metas, treino e dieta prontos para a tela. Nada é persistido. `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
 | `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ usuarioId }`. Grava usuário, peso, restrições e as duas fichas numa transação. | **400** sem perfil ou sem plano; **409** e-mail já cadastrado |
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ usuarioId, nome, sobrenome, email }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
 | `GET` | `/api/plano/:usuarioId` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário inexistente ou sem plano ativo |

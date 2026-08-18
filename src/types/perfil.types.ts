@@ -22,7 +22,7 @@ export interface PerfilInput {
     nivelExperiencia: NivelExperiencia;
     objetivo: Objetivo;
     diasPorSemana: number;
-    numeroRefeicoes?: number;
+    numeroRefeicoes: number;
 }
 
 /** O perfil como chega do app: o PerfilInput mais os chips de restrição. */

@@ -16,6 +16,7 @@ const PERFIL = {
     nivelExperiencia: "iniciante" as const,
     objetivo: "perder" as const,
     diasPorSemana: 4,
+    numeroRefeicoes: 4,
 };
 
 describe("PlanoMapper", () => {

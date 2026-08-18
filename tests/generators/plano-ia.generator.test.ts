@@ -16,6 +16,7 @@ const PERFIL: PerfilInput = {
     nivelExperiencia: "iniciante",
     objetivo: "perder",
     diasPorSemana: 4,
+    numeroRefeicoes: 4,
 };
 
 const PERFIL_PLANO: PerfilParaPlano = { restricoesAlimentares: [], restricoesFisicas: [] };

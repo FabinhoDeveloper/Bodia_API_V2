@@ -13,6 +13,7 @@ const PERFIL: PerfilInput = {
     nivelExperiencia: "iniciante",
     objetivo: "perder",
     diasPorSemana: 4,
+    numeroRefeicoes: 4,
 };
 
 describe("PlanoPrompt", () => {
@@ -81,24 +82,33 @@ describe("PlanoPrompt", () => {
         expect(user).toContain(`distribuir entre exercícios e sessões): ${resultado.treino.seriesPorGrupoSemana}`);
     });
 
-    // As calorias por refeição entram como ORIENTAÇÃO, não como meta a fechar.
-    // Exigir os 4 macros em cada refeição vira 16 restrições simultâneas e faz o
-    // raciocínio do modelo disparar — medido: a geração estourava os 180s.
-    it("sugere as calorias de cada refeição sem transformá-las em meta rígida", () => {
+    // Quantas refeições e como o dia se divide entre elas são decisão do
+    // usuário + motor determinístico, nunca do modelo: por isso as quatro metas
+    // de cada refeição vão prontas no prompt, com os nomes exatos a usar.
+    //
+    // ATENÇÃO ao custo: exigir os 4 macros por refeição multiplica as restrições
+    // simultâneas e faz o raciocínio do modelo crescer — foi por isso que antes
+    // só as kcal iam, como orientação. A tolerância de 5% (testada abaixo) é o
+    // contrapeso que impede a busca exaustiva; não remover.
+    it("manda a meta completa de cada refeição, com o nome exato", () => {
         const { user, system } = montar();
 
         for (const refeicao of resultado.dieta.refeicoes) {
-            expect(user).toContain(`${refeicao.nome}: ~${refeicao.kcal} kcal`);
+            expect(user).toContain(
+                `${refeicao.nome}: ${refeicao.kcal} kcal | proteína ${refeicao.proteina} g | carboidrato ${refeicao.carboidrato} g | gordura ${refeicao.gordura} g`,
+            );
         }
 
-        expect(user).toContain("apenas para orientar");
-        expect(system).toContain("O que vale é o TOTAL DO DIA");
+        expect(user).toContain(`# Refeições do dia (${resultado.dieta.numeroRefeicoes} refeições`);
+        expect(system).toContain("Monte EXATAMENTE as refeições listadas");
     });
 
     // Sem saber que 5% é aceitável, o modelo busca a combinação perfeita e
     // queima raciocínio sem controle.
     it("informa a tolerância aceitável para o modelo não buscar precisão exata", () => {
-        expect(montar().system).toMatch(/até 5% no total do dia é perfeitamente aceitável/i);
+        expect(montar().system).toMatch(
+            /até 5% na meta de cada refeição, e no total do dia, é perfeitamente aceitável/i,
+        );
     });
 
     it("lista os alimentos com id e macros por 100 g", () => {

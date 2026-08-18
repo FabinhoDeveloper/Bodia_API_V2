@@ -23,6 +23,7 @@ function perfilBase(overrides: Partial<PerfilInput> = {}): PerfilInput {
         nivelExperiencia: "iniciante",
         objetivo: "perder",
         diasPorSemana: 3,
+        numeroRefeicoes: 4,
         ...overrides,
     };
 }
@@ -199,6 +200,37 @@ describe("EngineService", () => {
 
             expect(almoco.kcal).toBeGreaterThan(cafe.kcal);
         });
+
+        // Amarra os percentuais da tabela, não só a soma: sem isto, trocar 40%
+        // por 30% no almoço continuaria fechando o dia e passando nos testes.
+        it.each([
+            [3, "Café da manhã", 0.25],
+            [3, "Almoço", 0.4],
+            [4, "Almoço", 0.35],
+            [4, "Lanche da tarde", 0.15],
+            [5, "Almoço", 0.35],
+            [5, "Lanche da manhã", 0.1],
+            [6, "Almoço", 0.3],
+            [6, "Lanche da tarde", 0.1],
+        ])("com %i refeições, %s recebe %f da meta do dia", (numeroRefeicoes, nome, fatia) => {
+            const { dieta, meta } = engineService.calcular(perfilBase({ numeroRefeicoes }));
+            const refeicao = dieta.refeicoes.find((r) => r.nome === nome)!;
+
+            expect(refeicao.kcal).toBe(Math.round(meta.caloriasAlvo * fatia));
+        });
+
+        // A última refeição é a única fora da regra: recebe o restante, para a
+        // soma das partes fechar o total exato do dia.
+        it.each([
+            [3, "Jantar"],
+            [4, "Jantar"],
+            [5, "Jantar"],
+            [6, "Ceia"],
+        ])("com %i refeições, a última do dia é %s", (numeroRefeicoes, nome) => {
+            const { dieta } = engineService.calcular(perfilBase({ numeroRefeicoes }));
+
+            expect(dieta.refeicoes[dieta.refeicoes.length - 1].nome).toBe(nome);
+        });
     });
 
     describe("validarPerfil", () => {
@@ -208,6 +240,26 @@ describe("EngineService", () => {
             );
             expect(() => engineService.calcular(perfilBase({ diasPorSemana: 7 }))).toThrow(
                 "diasPorSemana deve ser um inteiro entre 2 e 6",
+            );
+        });
+
+        it("lança erro se numeroRefeicoes estiver fora de 3-6", () => {
+            expect(() => engineService.calcular(perfilBase({ numeroRefeicoes: 2 }))).toThrow(
+                "numeroRefeicoes deve ser um inteiro entre 3 e 6",
+            );
+            expect(() => engineService.calcular(perfilBase({ numeroRefeicoes: 7 }))).toThrow(
+                "numeroRefeicoes deve ser um inteiro entre 3 e 6",
+            );
+        });
+
+        // O campo é obrigatório no tipo, mas o payload chega da rede sem
+        // validação campo a campo — um app antigo ainda pode omiti-lo.
+        it("lança erro se numeroRefeicoes não vier no perfil", () => {
+            const semRefeicoes = perfilBase();
+            delete (semRefeicoes as Partial<PerfilInput>).numeroRefeicoes;
+
+            expect(() => engineService.calcular(semRefeicoes)).toThrow(
+                "numeroRefeicoes deve ser um inteiro entre 3 e 6",
             );
         });
 
