@@ -2,8 +2,8 @@ import ConflitoError from "../errors/ConflitoError";
 import ValidationError from "../errors/ValidationError";
 import UserRepository from "../repositories/user.repository";
 import { CadastroRequest } from "../types/plano.types";
+import AuthService from "./auth.service";
 import EngineService from "./engine.service";
-import SenhaService from "./SenhaService";
 
 /**
  * Grava o cadastro quando o usuário aceita o plano na tela de revisão.
@@ -23,16 +23,16 @@ import SenhaService from "./SenhaService";
 export default class CadastroService {
     private readonly userRepository;
     private readonly engineService;
-    private readonly senhaService;
+    private readonly authService;
 
     constructor(
         userRepository: UserRepository,
         engineService: EngineService,
-        senhaService: SenhaService,
+        authService: AuthService,
     ) {
         this.userRepository = userRepository;
         this.engineService = engineService;
-        this.senhaService = senhaService;
+        this.authService = authService;
     }
 
     async cadastrar(entrada: CadastroRequest): Promise<{ usuarioId: string }> {
@@ -52,7 +52,7 @@ export default class CadastroService {
 
         // Lança ValidationError se o perfil for inválido — antes de gravar nada.
         const resultado = this.engineService.calcular(perfil);
-        const senhaHash = await this.senhaService.gerarHash(conta.senha);
+        const senhaHash = await this.authService.gerarHash(conta.senha);
 
         const usuario = await this.userRepository.criar({
             conta,

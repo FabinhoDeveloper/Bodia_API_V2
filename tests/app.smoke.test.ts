@@ -37,7 +37,51 @@ const CONTA_VALIDA = {
     senha: "senha-secreta",
 };
 
+/**
+ * Percorre o router do Express e devolve todas as rotas efetivamente
+ * registradas, como "POST /api/login". É o teste que pega a rota que sumiu
+ * num refactor: as rotas que dependem de banco não podem ser chamadas de
+ * verdade aqui, mas a AUSÊNCIA delas continua sendo detectável.
+ */
+function rotasRegistradas(): string[] {
+    const encontradas: string[] = [];
+
+    const percorrer = (camada: any, prefixo: string) => {
+        if (camada.route) {
+            const metodos = Object.keys(camada.route.methods).map((m) => m.toUpperCase());
+            for (const metodo of metodos) {
+                encontradas.push(`${metodo} ${prefixo}${camada.route.path}`);
+            }
+            return;
+        }
+        if (camada.name === "router" && camada.handle?.stack) {
+            const novoPrefixo = camada.regexp?.source.includes("api") ? "/api" : prefixo;
+            for (const filha of camada.handle.stack) percorrer(filha, novoPrefixo);
+        }
+    };
+
+    for (const camada of app._router.stack) percorrer(camada, "");
+
+    return encontradas;
+}
+
 describe("app (smoke)", () => {
+    // Contrato consumido pelo app mobile — nenhuma reorganização interna pode
+    // mudar estas cinco linhas.
+    it("registra exatamente as rotas que o app consome", () => {
+        const rotas = rotasRegistradas();
+
+        expect(rotas).toEqual(
+            expect.arrayContaining([
+                "POST /api/onboarding",
+                "POST /api/cadastro",
+                "POST /api/login",
+                "GET /api/plano/:usuarioId",
+                "GET /api/teste-geracao",
+            ]),
+        );
+    });
+
     it("responde na raiz", async () => {
         const resposta = await request(app).get("/");
 

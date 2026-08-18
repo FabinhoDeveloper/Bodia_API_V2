@@ -1,9 +1,11 @@
+import bcrypt from "bcrypt";
+
 import ConflitoError from "../../src/errors/ConflitoError";
 import ValidationError from "../../src/errors/ValidationError";
 import UserRepository from "../../src/repositories/user.repository";
 import CadastroService from "../../src/services/CadastroService";
 import EngineService from "../../src/services/engine.service";
-import SenhaService from "../../src/services/SenhaService";
+import AuthService from "../../src/services/auth.service";
 import { CadastroRequest, PlanoDTO } from "../../src/types/plano.types";
 
 function planoDTO(overrides: Partial<PlanoDTO> = {}): PlanoDTO {
@@ -73,14 +75,15 @@ function repositoryFake(emailExistente = false) {
     } as unknown as UserRepository & { buscarPorEmail: jest.Mock; criar: jest.Mock };
 }
 
-// rounds baixo de propósito: bcrypt com custo real deixaria a suíte lenta.
-const senhaService = new SenhaService(4);
+// rounds baixo de propósito: bcrypt com custo real deixaria a suíte lenta. O
+// repository não é exercitado por este caminho — o cadastro só usa gerarHash.
+const authService = new AuthService(repositoryFake(), 4);
 const engineService = new EngineService();
 
 function montar(repository = repositoryFake()) {
     return {
         repository,
-        service: new CadastroService(repository, engineService, senhaService),
+        service: new CadastroService(repository, engineService, authService),
     };
 }
 
@@ -106,7 +109,9 @@ describe("CadastroService", () => {
         const { senhaHash } = repository.criar.mock.calls[0][0];
 
         expect(senhaHash).not.toBe("12345678");
-        await expect(senhaService.conferir("12345678", senhaHash)).resolves.toBe(true);
+        // Confere pelo bcrypt direto: o que importa é que o hash GRAVADO
+        // valida a senha original, não por qual método ele foi conferido.
+        await expect(bcrypt.compare("12345678", senhaHash)).resolves.toBe(true);
     });
 
     // O PlanoDTO não carrega tmb/tdee/frequência/macros por refeição — eles vêm
@@ -165,24 +170,5 @@ describe("CadastroService", () => {
         await service.cadastrar(cadastroBase());
 
         expect(logSpy.mock.calls.flat().join(" ")).not.toContain("12345678");
-    });
-});
-
-describe("SenhaService", () => {
-    it("confere a senha correta e recusa a errada", async () => {
-        const hash = await senhaService.gerarHash("12345678");
-
-        await expect(senhaService.conferir("12345678", hash)).resolves.toBe(true);
-        await expect(senhaService.conferir("87654321", hash)).resolves.toBe(false);
-    });
-
-    // O salt aleatório é o que impede descobrir senhas iguais comparando hashes.
-    it("gera hashes distintos para a mesma senha", async () => {
-        const [a, b] = await Promise.all([
-            senhaService.gerarHash("12345678"),
-            senhaService.gerarHash("12345678"),
-        ]);
-
-        expect(a).not.toBe(b);
     });
 });

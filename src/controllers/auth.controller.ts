@@ -1,18 +1,18 @@
 import { NextFunction, Request, Response } from "express";
 
-import LoginService from "../services/LoginService";
+import AuthService from "../services/auth.service";
 import { LoginInput } from "../types/auth.types";
 
-/** Ponte HTTP do login. Sem regra de negócio. */
-export default class LoginController {
-    private readonly loginService;
+/** Ponte HTTP da autenticação. Sem regra de negócio. */
+export default class AuthController {
+    private readonly authService;
 
-    constructor(loginService: LoginService) {
-        this.loginService = loginService;
+    constructor(authService: AuthService) {
+        this.authService = authService;
     }
 
     entrar = (req: Request, res: Response, next: NextFunction) => {
-        this.loginService
+        this.authService
             .entrar(req.body as LoginInput)
             .then((usuario) => res.json(usuario))
             .catch(next);
