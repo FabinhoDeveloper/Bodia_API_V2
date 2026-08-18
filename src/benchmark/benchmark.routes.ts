@@ -7,6 +7,7 @@ import EngineService from "../services/engine.service";
 import CatalogoFilter from "../prompts/catalogo.filter";
 import AiService from "../services/ai.service";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
+import ValidadorMacros from "../generators/validador-macros";
 import PlanoPrompt from "../prompts/plano.prompt";
 
 // Endpoint TEMPORÁRIO de benchmark — mede o caminho de geração real da IA
@@ -25,6 +26,7 @@ const benchmarkController = new BenchmarkController(
             new CatalogoFilter(),
             new PlanoPrompt(),
             new AiService(getDeepseekClient, deepseekModel, deepseekTimeoutMs),
+            new ValidadorMacros(),
         ),
         deepseekModel,
     ),

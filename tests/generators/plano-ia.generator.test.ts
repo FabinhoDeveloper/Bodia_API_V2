@@ -2,6 +2,7 @@ import EngineService from "../../src/services/engine.service";
 import CatalogoFilter from "../../src/prompts/catalogo.filter";
 import AiService from "../../src/services/ai.service";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
+import ValidadorMacros from "../../src/generators/validador-macros";
 import PlanoPrompt from "../../src/prompts/plano.prompt";
 import { PerfilInput, PerfilParaPlano } from "../../src/types/perfil.types";
 
@@ -59,7 +60,12 @@ describe("PlanoIaGenerator", () => {
 
     function criarService(resposta: string) {
         const aiService = llmServiceFake(resposta);
-        const planoIaGenerator = new PlanoIaGenerator(new CatalogoFilter(), new PlanoPrompt(), aiService);
+        const planoIaGenerator = new PlanoIaGenerator(
+            new CatalogoFilter(),
+            new PlanoPrompt(),
+            aiService,
+            new ValidadorMacros(),
+        );
         return { planoIaGenerator, aiService };
     }
 

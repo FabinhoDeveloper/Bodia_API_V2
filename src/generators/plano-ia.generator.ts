@@ -2,18 +2,14 @@ import { Alimento } from "../data/alimentos";
 import { Exercicio } from "../data/exercicios";
 import { ResultadoBenchmarkGeracao } from "../types/benchmark.types";
 import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
-import {
-    DesvioMacro,
-    PlanoGerado,
-    PlanoValidado,
-    Validacao,
-} from "../types/plano.types";
 import CatalogoFilter from "../prompts/catalogo.filter";
-import AiService from "../services/ai.service";
 import PlanoPrompt from "../prompts/plano.prompt";
+import AiService from "../services/ai.service";
+import { PlanoGerado, PlanoValidado, Validacao } from "../types/plano.types";
+import ValidadorMacros from "./validador-macros";
 
 /**
- * Orquestra a geração do plano pela IA (chamado por OnboardingService, depois
+ * Orquestra a geração do plano pela IA (chamado pelo PlanService, depois
  * que o EngineService já produziu o ResultadoCalculo) e é o ponto onde a
  * resposta do modelo é conferida, nunca aceita de graça:
  *
@@ -33,23 +29,21 @@ import PlanoPrompt from "../prompts/plano.prompt";
  * quem chamou.
  */
 export default class PlanoIaGenerator {
-    // Limite de referência: a fundamentação teórica cita desvio calórico inferior
-    // a 2% como o resultado alcançável combinando LLM e base nutricional
-    // estruturada via prompt engineering (Khamesian apud SRIVASTAVA et al., 2025).
-    private static readonly DESVIO_ACEITAVEL_PERCENTUAL = 5;
-
     private readonly catalogoFilter;
     private readonly planoPrompt;
     private readonly aiService;
+    private readonly validadorMacros;
 
     constructor(
         catalogoFilter: CatalogoFilter,
         planoPrompt: PlanoPrompt,
         aiService: AiService,
+        validadorMacros: ValidadorMacros,
     ) {
         this.catalogoFilter = catalogoFilter;
         this.planoPrompt = planoPrompt;
         this.aiService = aiService;
+        this.validadorMacros = validadorMacros;
     }
 
     async gerar(perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado> {
@@ -71,7 +65,7 @@ export default class PlanoIaGenerator {
         const plano = this.parsear(resposta);
 
         this.validarIds(plano, alimentos, exercicios);
-        const validacao = this.validarMacros(plano, alimentos, resultado);
+        const validacao = this.validadorMacros.validar(plano, alimentos, resultado);
 
         return { plano, validacao };
     }
@@ -159,7 +153,7 @@ export default class PlanoIaGenerator {
                 // fica disponível na resposta do benchmark para inspeção.
                 plano = this.parsear(conteudo);
                 this.validarIds(plano, alimentos, exercicios);
-                validacao = this.validarMacros(plano, alimentos, resultado);
+                validacao = this.validadorMacros.validar(plano, alimentos, resultado);
                 validacaoOk = validacao.dentroDoLimite;
             } catch (erro) {
                 validacaoOk = false;
@@ -233,52 +227,5 @@ export default class PlanoIaGenerator {
                 }
             }
         }
-    }
-
-    /**
-     * Recalcula os totais da dieta a partir dos valores da TACO e das gramas que o
-     * modelo propôs. O número final nunca é aceito na palavra do modelo.
-     */
-    private validarMacros(
-        plano: PlanoGerado,
-        alimentos: Alimento[],
-        resultado: ResultadoCalculo,
-    ): Validacao {
-        const porId = new Map(alimentos.map((a) => [a.id, a]));
-        const total = { kcal: 0, proteina: 0, carboidrato: 0, gordura: 0 };
-
-        for (const refeicao of plano.dieta.refeicoes) {
-            for (const item of refeicao.itens ?? []) {
-                const alimento = porId.get(item.alimentoId)!;
-                const fator = item.gramas / 100;
-
-                total.kcal += alimento.kcal * fator;
-                total.proteina += alimento.proteina * fator;
-                total.carboidrato += alimento.carboidrato * fator;
-                total.gordura += alimento.gordura * fator;
-            }
-        }
-
-        const calorias = this.compararComMeta(resultado.meta.caloriasAlvo, total.kcal);
-        const proteina = this.compararComMeta(resultado.macros.proteina.g, total.proteina);
-        const carboidrato = this.compararComMeta(resultado.macros.carboidrato.g, total.carboidrato);
-        const gordura = this.compararComMeta(resultado.macros.gordura.g, total.gordura);
-
-        const dentroDoLimite = [calorias, proteina, carboidrato, gordura].every(
-            (macro) => Math.abs(macro.desvioPercentual) <= PlanoIaGenerator.DESVIO_ACEITAVEL_PERCENTUAL,
-        );
-
-        return { calorias, proteina, carboidrato, gordura, dentroDoLimite };
-    }
-
-    private compararComMeta(meta: number, obtido: number): DesvioMacro {
-        const arredondado = Math.round(obtido * 10) / 10;
-        const desvioPercentual = meta === 0 ? 0 : ((arredondado - meta) / meta) * 100;
-
-        return {
-            meta,
-            obtido: arredondado,
-            desvioPercentual: Math.round(desvioPercentual * 10) / 10,
-        };
     }
 }

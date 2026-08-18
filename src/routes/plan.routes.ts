@@ -5,6 +5,7 @@ import prismaClient from "../config/prisma";
 import PlanController from "../controllers/plan.controller";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
 import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
+import ValidadorMacros from "../generators/validador-macros";
 import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PlanoMapper from "../mappers/plano.mapper";
 import CatalogoFilter from "../prompts/catalogo.filter";
@@ -21,11 +22,12 @@ const router = Router();
 // com SIMULAR_IA=false — está desligado por causa da latência (~3 min) e das
 // falhas por raciocínio descontrolado, não por estar quebrado.
 const geradorDePlano: GeradorDePlano = simularIa
-    ? new PlanoSimuladoGenerator()
+    ? new PlanoSimuladoGenerator(new ValidadorMacros())
     : new PlanoIaGenerator(
           new CatalogoFilter(),
           new PlanoPrompt(),
           new AiService(getDeepseekClient, deepseekModel, deepseekTimeoutMs),
+          new ValidadorMacros(),
       );
 
 console.log(`[onboarding] gerador de plano: ${simularIa ? "SIMULADO (fixture)" : "IA"}`);
