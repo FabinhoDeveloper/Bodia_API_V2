@@ -1,7 +1,7 @@
 import { PerfilOnboardingInput } from "../types/perfil.types";
 import { PlanoGerado, Validacao } from "../types/plano.types";
-import CalculoService from "./CalculoService";
-import PlanoService from "./PlanoService";
+import EngineService from "../services/engine.service";
+import PlanoIaGenerator from "../generators/plano-ia.generator";
 
 export interface TokensBenchmark {
     prompt: number | null;
@@ -21,7 +21,7 @@ export interface RespostaBenchmark {
     };
     tokens: TokensBenchmark;
     finish_reason: string | null;
-    // Objeto usage exatamente como a DeepSeek devolveu — ver LlmService
+    // Objeto usage exatamente como a DeepSeek devolveu — ver AiService
     // .gerarJsonComMetricas. Fica aqui para conferir campo por campo o que o
     // provider realmente manda, sem depender do que este endpoint decidiu
     // extrair em `tokens`.
@@ -63,23 +63,23 @@ const PERFIL_FICTICIO: PerfilOnboardingInput = {
 
 /**
  * Orquestrador do benchmark de geração (GET /api/teste-geracao). Isolado do
- * fluxo real do app: usa CalculoService e PlanoService (os mesmos das
+ * fluxo real do app: usa EngineService e PlanoIaGenerator (os mesmos das
  * produção, injetados por construtor como qualquer outro service), mas com
  * um perfil fictício fixo em vez do payload de /api/onboarding, e chama
- * PlanoService.gerarComMetricas em vez de gerar() — método que existe só
+ * PlanoIaGenerator.gerarComMetricas em vez de gerar() — método que existe só
  * para isto e não é usado em nenhum caminho de produção.
  *
- * Não altera CalculoService, CatalogoService nem PromptService: usa
+ * Não altera EngineService, CatalogoFilter nem PlanoPrompt: usa
  * exatamente a versão de produção de cada um.
  */
-export default class BenchmarkGeracaoService {
-    private readonly calculoService;
-    private readonly planoService;
+export default class BenchmarkService {
+    private readonly engineService;
+    private readonly planoIaGenerator;
     private readonly modeloConfigurado;
 
-    constructor(calculoService: CalculoService, planoService: PlanoService, modeloConfigurado: string) {
-        this.calculoService = calculoService;
-        this.planoService = planoService;
+    constructor(engineService: EngineService, planoIaGenerator: PlanoIaGenerator, modeloConfigurado: string) {
+        this.engineService = engineService;
+        this.planoIaGenerator = planoIaGenerator;
         this.modeloConfigurado = modeloConfigurado;
     }
 
@@ -89,12 +89,12 @@ export default class BenchmarkGeracaoService {
         console.log(`[benchmark] modelo requisitado: ${this.modeloConfigurado}`);
 
         const inicioCalculo = performance.now();
-        const resultado = this.calculoService.calcular(PERFIL_FICTICIO);
+        const resultado = this.engineService.calcular(PERFIL_FICTICIO);
         const calculoMs = performance.now() - inicioCalculo;
 
         console.log("[benchmark] chamada LLM iniciada");
 
-        const resultadoGeracao = await this.planoService.gerarComMetricas(
+        const resultadoGeracao = await this.planoIaGenerator.gerarComMetricas(
             {
                 restricoesAlimentares: PERFIL_FICTICIO.restricoesAlimentares,
                 restricoesFisicas: PERFIL_FICTICIO.restricoesFisicas,

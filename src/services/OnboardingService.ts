@@ -1,28 +1,28 @@
 import ValidationError from "../errors/ValidationError";
 import { GeradorDePlano, OnboardingRequest, PlanoDTO } from "../types/plano.types";
-import CalculoService from "./CalculoService";
-import PlanoMapper from "./PlanoMapper";
+import EngineService from "./engine.service";
+import PlanoMapper from "../mappers/plano.mapper";
 
 /**
  * Orquestra o cadastro que chega do app (POST /api/onboarding, via
  * OnboardingController): valida se há perfil, calcula os números
- * (CalculoService), manda montar treino e dieta e converte o resultado no
+ * (EngineService), manda montar treino e dieta e converte o resultado no
  * formato que o app consome (PlanoMapper).
  *
  * Devolve o plano na resposta HTTP e também o imprime no console. Nada é
  * persistido ainda — o app guarda o plano em memória.
  */
 export default class OnboardingService {
-    private readonly calculoService;
+    private readonly engineService;
     private readonly geradorDePlano;
     private readonly planoMapper;
 
     constructor(
-        calculoService: CalculoService,
+        engineService: EngineService,
         geradorDePlano: GeradorDePlano,
         planoMapper: PlanoMapper,
     ) {
-        this.calculoService = calculoService;
+        this.engineService = engineService;
         this.geradorDePlano = geradorDePlano;
         this.planoMapper = planoMapper;
     }
@@ -32,7 +32,7 @@ export default class OnboardingService {
             throw new ValidationError("perfil é obrigatório para gerar o plano");
         }
 
-        const resultado = this.calculoService.calcular(cadastro.perfil);
+        const resultado = this.engineService.calcular(cadastro.perfil);
 
         console.log("[onboarding] plano calculado:", JSON.stringify(resultado, null, 2));
 

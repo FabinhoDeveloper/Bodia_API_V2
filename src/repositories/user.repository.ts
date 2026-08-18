@@ -35,7 +35,7 @@ export interface CadastroCompleto {
     senhaHash: string;
 }
 
-export default class CadastroRepository {
+export default class UserRepository {
     private readonly prismaClient;
 
     constructor(prismaClient: PrismaClient) {

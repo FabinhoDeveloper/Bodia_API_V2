@@ -1,9 +1,9 @@
 import { ALIMENTOS } from "../../src/data/alimentos";
 import { EXERCICIOS } from "../../src/data/exercicios";
 import { PLANO_SIMULADO } from "../../src/data/planoSimulado";
-import CalculoService from "../../src/services/CalculoService";
-import PlanoMapper from "../../src/services/PlanoMapper";
-import PlanoSimuladoService from "../../src/services/PlanoSimuladoService";
+import EngineService from "../../src/services/engine.service";
+import PlanoMapper from "../../src/mappers/plano.mapper";
+import PlanoSimuladoGenerator from "../../src/generators/plano-simulado.generator";
 
 const PERFIL = {
     sexo: "F" as const,
@@ -18,12 +18,12 @@ const PERFIL = {
 };
 
 describe("PlanoMapper", () => {
-    const calculoService = new CalculoService();
+    const engineService = new EngineService();
     const mapper = new PlanoMapper();
-    const resultado = calculoService.calcular(PERFIL);
+    const resultado = engineService.calcular(PERFIL);
     const dto = mapper.montar(PLANO_SIMULADO, resultado);
 
-    it("usa as metas do CalculoService, não números do plano", () => {
+    it("usa as metas do EngineService, não números do plano", () => {
         expect(dto.metas.calorias).toBe(resultado.meta.caloriasAlvo);
         expect(dto.metas.proteinaG).toBe(resultado.macros.proteina.g);
         expect(dto.metas.carboidratoG).toBe(resultado.macros.carboidrato.g);
@@ -61,12 +61,12 @@ describe("PlanoMapper", () => {
     });
 });
 
-describe("PlanoSimuladoService", () => {
-    const calculoService = new CalculoService();
-    const simulado = new PlanoSimuladoService();
+describe("PlanoSimuladoGenerator", () => {
+    const engineService = new EngineService();
+    const simulado = new PlanoSimuladoGenerator();
 
     it("devolve o fixture sem chamar a IA", async () => {
-        const resultado = calculoService.calcular(PERFIL);
+        const resultado = engineService.calcular(PERFIL);
         const { plano } = await simulado.gerar(
             { restricoesAlimentares: [], restricoesFisicas: [] },
             resultado,
@@ -94,7 +94,7 @@ describe("PlanoSimuladoService", () => {
     });
 
     it("confere os macros de verdade contra a meta do perfil", async () => {
-        const resultado = calculoService.calcular(PERFIL);
+        const resultado = engineService.calcular(PERFIL);
         const { validacao } = await simulado.gerar(
             { restricoesAlimentares: [], restricoesFisicas: [] },
             resultado,

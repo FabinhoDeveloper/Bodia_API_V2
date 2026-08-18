@@ -21,10 +21,10 @@ interface Sessao {
  * TDEE, meta calórica por objetivo, distribuição de macronutrientes e a
  * estrutura de treino (split, sessões, séries por grupo muscular).
  *
- * O resultado (ResultadoCalculo) é o que o PromptService injeta no prompt da
+ * O resultado (ResultadoCalculo) é o que o PlanoPrompt injeta no prompt da
  * IA — o LLM só recebe estes valores prontos, nunca recalcula nada aqui.
  */
-export default class CalculoService {
+export default class EngineService {
     // escala 1,2-1,9 citada na fundamentação (Harris & Benedict, 1919; Mifflin et al., 1990)
     private static readonly FATOR_ATIVIDADE: Record<NivelAtividade, number> = {
         sedentario: 1.2,
@@ -199,14 +199,14 @@ export default class CalculoService {
         const idade = this.calcularIdade(perfil.dataNascimento);
         const imc = this.calcularIMC(perfil.peso, perfil.altura);
         const tmb = Math.round(this.calcularTMB(perfil.sexo, perfil.peso, perfil.altura, idade));
-        const fatorAtividade = CalculoService.FATOR_ATIVIDADE[perfil.nivelAtividade];
+        const fatorAtividade = EngineService.FATOR_ATIVIDADE[perfil.nivelAtividade];
         const tdee = Math.round(tmb * fatorAtividade);
 
         return { idade, imc, tmb, fatorAtividade, tdee };
     }
 
     private calcularMetaCalorica(objetivo: Objetivo, tdee: number): ResultadoCalculo["meta"] {
-        const ajustePercentual = CalculoService.AJUSTE_CALORICO[objetivo];
+        const ajustePercentual = EngineService.AJUSTE_CALORICO[objetivo];
         const caloriasAlvo = Math.round(tdee * (1 + ajustePercentual));
 
         return { objetivo, ajustePercentual, caloriasAlvo };
@@ -219,11 +219,11 @@ export default class CalculoService {
                 : perfil.peso;
 
         const proteinaG = Math.round(
-            CalculoService.PROTEINA_G_POR_KG[perfil.objetivo] * massaReferenciaProteina,
+            EngineService.PROTEINA_G_POR_KG[perfil.objetivo] * massaReferenciaProteina,
         );
         const proteinaKcal = proteinaG * 4;
 
-        const gorduraKcal = Math.round(caloriasAlvo * CalculoService.GORDURA_PERCENTUAL_KCAL);
+        const gorduraKcal = Math.round(caloriasAlvo * EngineService.GORDURA_PERCENTUAL_KCAL);
         const gorduraG = Math.round(gorduraKcal / 9);
 
         const carboidratoKcal = caloriasAlvo - proteinaKcal - gorduraKcal;
@@ -242,8 +242,8 @@ export default class CalculoService {
     }
 
     private calcularTreino(perfil: PerfilInput): ResultadoCalculo["treino"] {
-        const { split, sessoes } = CalculoService.SPLIT_POR_DIAS[perfil.diasPorSemana];
-        const seriesPorGrupoSemana = CalculoService.SERIES_POR_GRUPO_SEMANA[perfil.nivelExperiencia];
+        const { split, sessoes } = EngineService.SPLIT_POR_DIAS[perfil.diasPorSemana];
+        const seriesPorGrupoSemana = EngineService.SERIES_POR_GRUPO_SEMANA[perfil.nivelExperiencia];
 
         return { diasPorSemana: perfil.diasPorSemana, split, sessoes, seriesPorGrupoSemana };
     }
@@ -258,8 +258,8 @@ export default class CalculoService {
         meta: ResultadoCalculo["meta"],
         macros: ResultadoCalculo["macros"],
     ): ResultadoCalculo["dieta"] {
-        const numeroRefeicoes = perfil.numeroRefeicoes ?? CalculoService.REFEICOES_PADRAO;
-        const distribuicao = CalculoService.DISTRIBUICAO_REFEICOES[numeroRefeicoes];
+        const numeroRefeicoes = perfil.numeroRefeicoes ?? EngineService.REFEICOES_PADRAO;
+        const distribuicao = EngineService.DISTRIBUICAO_REFEICOES[numeroRefeicoes];
 
         const restante = {
             kcal: meta.caloriasAlvo,

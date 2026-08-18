@@ -1,4 +1,4 @@
-import CalculoService from "../../src/services/CalculoService";
+import EngineService from "../../src/services/engine.service";
 import {
     NivelAtividade,
     NivelExperiencia,
@@ -27,11 +27,11 @@ function perfilBase(overrides: Partial<PerfilInput> = {}): PerfilInput {
     };
 }
 
-describe("CalculoService", () => {
-    const calculoService = new CalculoService();
+describe("EngineService", () => {
+    const engineService = new EngineService();
 
     describe("calcular - homem, déficit, sedentário", () => {
-        const resultado = calculoService.calcular(perfilBase());
+        const resultado = engineService.calcular(perfilBase());
 
         it("calcula metabolismo (idade, IMC, TMB, TDEE) pela equação de Mifflin-St Jeor", () => {
             expect(resultado.metabolismo.idade).toBe(30);
@@ -67,7 +67,7 @@ describe("CalculoService", () => {
     });
 
     describe("calcular - mulher, manutenção, moderada, com percentual de gordura", () => {
-        const resultado = calculoService.calcular(
+        const resultado = engineService.calcular(
             perfilBase({
                 sexo: "F",
                 dataNascimento: dataNascimentoParaIdade(25),
@@ -110,7 +110,7 @@ describe("CalculoService", () => {
     });
 
     it("os macros sempre somam exatamente a meta calórica (carboidrato é a variável de ajuste)", () => {
-        const resultado = calculoService.calcular(perfilBase({ objetivo: "ganhar" }));
+        const resultado = engineService.calcular(perfilBase({ objetivo: "ganhar" }));
         const somaKcal =
             resultado.macros.proteina.kcal + resultado.macros.gordura.kcal + resultado.macros.carboidrato.kcal;
 
@@ -124,7 +124,7 @@ describe("CalculoService", () => {
         ["intenso", 3071],
         ["atleta", 3382],
     ] satisfies [NivelAtividade, number][])("aplica o fator de atividade '%s' sobre a TMB", (nivelAtividade, tdeeEsperado) => {
-        const resultado = calculoService.calcular(perfilBase({ nivelAtividade, objetivo: "manter" }));
+        const resultado = engineService.calcular(perfilBase({ nivelAtividade, objetivo: "manter" }));
         expect(resultado.metabolismo.tdee).toBe(tdeeEsperado);
     });
 
@@ -133,7 +133,7 @@ describe("CalculoService", () => {
         ["manter", 2136],
         ["ganhar", 2403],
     ] satisfies [Objetivo, number][])("ajusta a meta calórica para o objetivo '%s'", (objetivo, caloriasEsperadas) => {
-        const resultado = calculoService.calcular(perfilBase({ objetivo }));
+        const resultado = engineService.calcular(perfilBase({ objetivo }));
         expect(resultado.meta.caloriasAlvo).toBe(caloriasEsperadas);
     });
 
@@ -146,7 +146,7 @@ describe("CalculoService", () => {
     ] satisfies [number, string, number][])(
         "monta o split correto para %i dias por semana",
         (diasPorSemana, splitEsperado, quantidadeSessoes) => {
-            const resultado = calculoService.calcular(perfilBase({ diasPorSemana }));
+            const resultado = engineService.calcular(perfilBase({ diasPorSemana }));
             expect(resultado.treino.split).toBe(splitEsperado);
             expect(resultado.treino.sessoes).toHaveLength(quantidadeSessoes);
         },
@@ -159,7 +159,7 @@ describe("CalculoService", () => {
     ] satisfies [NivelExperiencia, number][])(
         "nível '%s' usa %d séries/grupo/semana",
         (nivelExperiencia, seriesEsperadas) => {
-            const resultado = calculoService.calcular(perfilBase({ nivelExperiencia }));
+            const resultado = engineService.calcular(perfilBase({ nivelExperiencia }));
             expect(resultado.treino.seriesPorGrupoSemana).toBe(seriesEsperadas);
         },
     );
@@ -169,7 +169,7 @@ describe("CalculoService", () => {
     // dia — por isso a soma é verificada nos quatro cenários.
     describe("distribuição por refeição", () => {
         it.each([3, 4, 5, 6])("gera %i refeições com nomes distintos", (numeroRefeicoes) => {
-            const { dieta } = calculoService.calcular(perfilBase({ numeroRefeicoes }));
+            const { dieta } = engineService.calcular(perfilBase({ numeroRefeicoes }));
 
             expect(dieta.numeroRefeicoes).toBe(numeroRefeicoes);
             expect(dieta.refeicoes).toHaveLength(numeroRefeicoes);
@@ -179,7 +179,7 @@ describe("CalculoService", () => {
         it.each([3, 4, 5, 6])(
             "a soma das %i refeições fecha exatamente a meta do dia",
             (numeroRefeicoes) => {
-                const { dieta, meta, macros } = calculoService.calcular(
+                const { dieta, meta, macros } = engineService.calcular(
                     perfilBase({ numeroRefeicoes }),
                 );
                 const somar = (campo: "kcal" | "proteina" | "carboidrato" | "gordura") =>
@@ -193,7 +193,7 @@ describe("CalculoService", () => {
         );
 
         it("concentra mais calorias no almoço que no café da manhã", () => {
-            const { dieta } = calculoService.calcular(perfilBase({ numeroRefeicoes: 4 }));
+            const { dieta } = engineService.calcular(perfilBase({ numeroRefeicoes: 4 }));
             const almoco = dieta.refeicoes.find((r) => r.nome === "Almoço")!;
             const cafe = dieta.refeicoes.find((r) => r.nome === "Café da manhã")!;
 
@@ -203,19 +203,19 @@ describe("CalculoService", () => {
 
     describe("validarPerfil", () => {
         it("lança erro se diasPorSemana estiver fora de 2-6", () => {
-            expect(() => calculoService.calcular(perfilBase({ diasPorSemana: 1 }))).toThrow(
+            expect(() => engineService.calcular(perfilBase({ diasPorSemana: 1 }))).toThrow(
                 "diasPorSemana deve ser um inteiro entre 2 e 6",
             );
-            expect(() => calculoService.calcular(perfilBase({ diasPorSemana: 7 }))).toThrow(
+            expect(() => engineService.calcular(perfilBase({ diasPorSemana: 7 }))).toThrow(
                 "diasPorSemana deve ser um inteiro entre 2 e 6",
             );
         });
 
         it("lança erro se peso ou altura não forem positivos", () => {
-            expect(() => calculoService.calcular(perfilBase({ peso: 0 }))).toThrow(
+            expect(() => engineService.calcular(perfilBase({ peso: 0 }))).toThrow(
                 "peso deve ser maior que zero",
             );
-            expect(() => calculoService.calcular(perfilBase({ altura: -10 }))).toThrow(
+            expect(() => engineService.calcular(perfilBase({ altura: -10 }))).toThrow(
                 "altura deve ser maior que zero",
             );
         });

@@ -11,7 +11,7 @@ let client: OpenAI | null = null;
 // que os cabeçalhos da resposta chegam (`clearTimeout` no finally de
 // fetchWithTimeout), e a DeepSeek envia os cabeçalhos antes de terminar de
 // gerar — uma chamada já durou 328s com este teto em 180s. Por isso o
-// LlmService também passa um AbortSignal por requisição, que continua valendo
+// AiService também passa um AbortSignal por requisição, que continua valendo
 // durante a leitura do corpo.
 export const deepseekTimeoutMs = 1800000000;
 
@@ -45,7 +45,7 @@ export function getDeepseekClient(): OpenAI {
 export const deepseekModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
 
 /**
- * Quando true, a rota usa o PlanoSimuladoService em vez de chamar a IA. Padrão
+ * Quando true, a rota usa o PlanoSimuladoGenerator em vez de chamar a IA. Padrão
  * ligado: a geração real hoje leva ~3 min e falha com frequência, o que
  * inviabiliza desenvolver o resto do produto em cima dela.
  */

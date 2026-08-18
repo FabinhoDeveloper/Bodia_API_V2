@@ -1,8 +1,8 @@
 import ConflitoError from "../errors/ConflitoError";
 import ValidationError from "../errors/ValidationError";
-import CadastroRepository from "../repositories/CadastroRepository";
+import UserRepository from "../repositories/user.repository";
 import { CadastroRequest } from "../types/plano.types";
-import CalculoService from "./CalculoService";
+import EngineService from "./engine.service";
 import SenhaService from "./SenhaService";
 
 /**
@@ -13,7 +13,7 @@ import SenhaService from "./SenhaService";
  * criado. Nada é gravado antes desta confirmação.
  *
  * Os NÚMEROS do plano são recalculados aqui a partir do perfil, em vez de
- * virem no payload: o CalculoService é determinístico, então o resultado é
+ * virem no payload: o EngineService é determinístico, então o resultado é
  * idêntico ao que gerou o plano, e o DTO não precisa carregar campos que a
  * tela nem usa (tmb, tdee, frequência semanal, macros por refeição).
  *
@@ -21,17 +21,17 @@ import SenhaService from "./SenhaService";
  * da IA e regenerar daria um plano diferente do que o usuário aprovou.
  */
 export default class CadastroService {
-    private readonly cadastroRepository;
-    private readonly calculoService;
+    private readonly userRepository;
+    private readonly engineService;
     private readonly senhaService;
 
     constructor(
-        cadastroRepository: CadastroRepository,
-        calculoService: CalculoService,
+        userRepository: UserRepository,
+        engineService: EngineService,
         senhaService: SenhaService,
     ) {
-        this.cadastroRepository = cadastroRepository;
-        this.calculoService = calculoService;
+        this.userRepository = userRepository;
+        this.engineService = engineService;
         this.senhaService = senhaService;
     }
 
@@ -46,15 +46,15 @@ export default class CadastroService {
             throw new ValidationError("plano precisa ter treino e dieta");
         }
 
-        if (await this.cadastroRepository.buscarPorEmail(conta.email)) {
+        if (await this.userRepository.buscarPorEmail(conta.email)) {
             throw new ConflitoError("Já existe uma conta com este e-mail");
         }
 
         // Lança ValidationError se o perfil for inválido — antes de gravar nada.
-        const resultado = this.calculoService.calcular(perfil);
+        const resultado = this.engineService.calcular(perfil);
         const senhaHash = await this.senhaService.gerarHash(conta.senha);
 
-        const usuario = await this.cadastroRepository.criar({
+        const usuario = await this.userRepository.criar({
             conta,
             perfil,
             plano,

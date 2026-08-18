@@ -1,6 +1,6 @@
-import CalculoService from "../../src/services/CalculoService";
-import CatalogoService from "../../src/services/CatalogoService";
-import PromptService from "../../src/services/PromptService";
+import EngineService from "../../src/services/engine.service";
+import CatalogoFilter from "../../src/prompts/catalogo.filter";
+import PlanoPrompt from "../../src/prompts/plano.prompt";
 import { PerfilInput } from "../../src/types/perfil.types";
 
 const PERFIL: PerfilInput = {
@@ -15,16 +15,16 @@ const PERFIL: PerfilInput = {
     diasPorSemana: 4,
 };
 
-describe("PromptService", () => {
-    const promptService = new PromptService();
-    const catalogoService = new CatalogoService();
-    const resultado = new CalculoService().calcular(PERFIL);
+describe("PlanoPrompt", () => {
+    const planoPrompt = new PlanoPrompt();
+    const catalogoFilter = new CatalogoFilter();
+    const resultado = new EngineService().calcular(PERFIL);
 
     function montar(restricoesAlimentares: string[] = [], restricoesFisicas: string[] = []) {
-        return promptService.montar({
+        return planoPrompt.montar({
             resultado,
-            alimentos: catalogoService.filtrarAlimentos(restricoesAlimentares),
-            exercicios: catalogoService.filtrarExercicios(
+            alimentos: catalogoFilter.filtrarAlimentos(restricoesAlimentares),
+            exercicios: catalogoFilter.filtrarExercicios(
                 restricoesFisicas,
                 resultado.treino.sessoes.map((s) => s.nome),
             ),

@@ -16,17 +16,17 @@ export interface PromptMontado {
 }
 
 /**
- * Monta o prompt enviado à IA — chamado pelo PlanoService depois que o
- * CatalogoService já filtrou os catálogos pela restrição do usuário. Devolve
- * { system, user }, que o LlmService manda para a DeepSeek sem alteração.
+ * Monta o prompt enviado à IA — chamado pelo PlanoIaGenerator depois que o
+ * CatalogoFilter já filtrou os catálogos pela restrição do usuário. Devolve
+ * { system, user }, que o AiService manda para a DeepSeek sem alteração.
  *
  * Segue as três técnicas que a fundamentação teórica (4.5.2) prescreve para
  * arquiteturas híbridas: system prompt (contrato de papel — o modelo é
  * redator, proibido de calcular ou citar item fora das listas), context
- * injection (os valores do CalculoService + os catálogos já filtrados) e
+ * injection (os valores do EngineService + os catálogos já filtrados) e
  * few-shot (exemplo do formato de saída em JSON).
  */
-export default class PromptService {
+export default class PlanoPrompt {
     montar(contexto: ContextoPrompt): PromptMontado {
         return {
             system: this.montarSystem(),

@@ -6,13 +6,13 @@ import { PlanoValidado, Validacao } from "../types/plano.types";
 /**
  * Substitui o LLM enquanto o fluxo da IA está desativado (flag SIMULAR_IA).
  * Devolve o fixture de src/data/planoSimulado.ts com a MESMA assinatura e o
- * mesmo tipo de retorno do PlanoService, então quem chama não sabe a diferença.
+ * mesmo tipo de retorno do PlanoIaGenerator, então quem chama não sabe a diferença.
  *
  * A validação de macros é feita de verdade contra as metas do perfil. Como o
  * fixture é fixo, os desvios saem altos — isso é esperado e serve justamente
  * para deixar visível no log que aquele plano não foi feito para o usuário.
  */
-export default class PlanoSimuladoService {
+export default class PlanoSimuladoGenerator {
     private static readonly DESVIO_ACEITAVEL_PERCENTUAL = 5;
 
     async gerar(_perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado> {
@@ -44,7 +44,7 @@ export default class PlanoSimuladoService {
         const dentroDoLimite = [calorias, proteina, carboidrato, gordura].every(
             (macro) =>
                 Math.abs(macro.desvioPercentual) <=
-                PlanoSimuladoService.DESVIO_ACEITAVEL_PERCENTUAL,
+                PlanoSimuladoGenerator.DESVIO_ACEITAVEL_PERCENTUAL,
         );
 
         return { calorias, proteina, carboidrato, gordura, dentroDoLimite };

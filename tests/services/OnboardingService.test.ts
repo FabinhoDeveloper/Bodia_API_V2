@@ -1,8 +1,8 @@
 import ValidationError from "../../src/errors/ValidationError";
-import CalculoService from "../../src/services/CalculoService";
+import EngineService from "../../src/services/engine.service";
 import OnboardingService from "../../src/services/OnboardingService";
-import PlanoMapper from "../../src/services/PlanoMapper";
-import PlanoService from "../../src/services/PlanoService";
+import PlanoMapper from "../../src/mappers/plano.mapper";
+import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
 import { OnboardingRequest, PlanoValidado } from "../../src/types/plano.types";
 
 function cadastroBase(overrides: Partial<OnboardingRequest> = {}): OnboardingRequest {
@@ -55,11 +55,11 @@ const PLANO_FAKE: PlanoValidado = {
 // A IA nunca é chamada de verdade nos testes: gastaria crédito e deixaria a suíte
 // dependente de rede.
 function planoServiceFake(gerar = jest.fn().mockResolvedValue(PLANO_FAKE)) {
-    return { gerar } as unknown as PlanoService & { gerar: jest.Mock };
+    return { gerar } as unknown as PlanoIaGenerator & { gerar: jest.Mock };
 }
 
 describe("OnboardingService", () => {
-    const calculoService = new CalculoService();
+    const engineService = new EngineService();
 
     let logSpy: jest.SpyInstance;
 
@@ -75,14 +75,14 @@ describe("OnboardingService", () => {
     // alimenta, em vez dos mocks que o app tinha embutidos.
     it("devolve o plano no formato que o app consome", async () => {
         const onboardingService = new OnboardingService(
-            calculoService,
+            engineService,
             planoServiceFake(),
             new PlanoMapper(),
         );
         const cadastro = cadastroBase();
 
         const { plano } = await onboardingService.receberCadastro(cadastro);
-        const esperado = calculoService.calcular(cadastro.perfil!);
+        const esperado = engineService.calcular(cadastro.perfil!);
 
         expect(plano.metas.calorias).toBe(esperado.meta.caloriasAlvo);
         expect(plano.metas.proteinaG).toBe(esperado.macros.proteina.g);
@@ -92,18 +92,18 @@ describe("OnboardingService", () => {
     });
 
     it("registra no console o plano calculado, não o payload recebido", async () => {
-        const onboardingService = new OnboardingService(calculoService, planoServiceFake(), new PlanoMapper());
+        const onboardingService = new OnboardingService(engineService, planoServiceFake(), new PlanoMapper());
         const cadastro = cadastroBase();
 
         await onboardingService.receberCadastro(cadastro);
 
         const [rotulo, corpo] = logSpy.mock.calls[0];
         expect(rotulo).toBe("[onboarding] plano calculado:");
-        expect(JSON.parse(corpo)).toEqual(calculoService.calcular(cadastro.perfil!));
+        expect(JSON.parse(corpo)).toEqual(engineService.calcular(cadastro.perfil!));
     });
 
     it("não expõe dados da conta no log", async () => {
-        const onboardingService = new OnboardingService(calculoService, planoServiceFake(), new PlanoMapper());
+        const onboardingService = new OnboardingService(engineService, planoServiceFake(), new PlanoMapper());
 
         await onboardingService.receberCadastro(cadastroBase());
 
@@ -113,23 +113,23 @@ describe("OnboardingService", () => {
     });
 
     it("gera o plano com a IA e registra o plano e a conferência dos macros", async () => {
-        const planoService = planoServiceFake();
-        const onboardingService = new OnboardingService(calculoService, planoService, new PlanoMapper());
+        const planoIaGenerator = planoServiceFake();
+        const onboardingService = new OnboardingService(engineService, planoIaGenerator, new PlanoMapper());
         const cadastro = cadastroBase();
 
         await onboardingService.receberCadastro(cadastro);
 
-        expect(planoService.gerar).toHaveBeenCalledWith(
+        expect(planoIaGenerator.gerar).toHaveBeenCalledWith(
             cadastro.perfil,
-            calculoService.calcular(cadastro.perfil!),
+            engineService.calcular(cadastro.perfil!),
         );
         expect(logSpy.mock.calls[1][0]).toBe("[onboarding] conferência dos macros:");
         expect(logSpy.mock.calls[2][0]).toBe("[onboarding] plano enviado ao app:");
     });
 
     it("propaga a falha da IA em vez de engolir o erro", async () => {
-        const planoService = planoServiceFake(jest.fn().mockRejectedValue(new Error("401 Unauthorized")));
-        const onboardingService = new OnboardingService(calculoService, planoService, new PlanoMapper());
+        const planoIaGenerator = planoServiceFake(jest.fn().mockRejectedValue(new Error("401 Unauthorized")));
+        const onboardingService = new OnboardingService(engineService, planoIaGenerator, new PlanoMapper());
 
         await expect(onboardingService.receberCadastro(cadastroBase())).rejects.toThrow(
             "401 Unauthorized",
@@ -137,20 +137,20 @@ describe("OnboardingService", () => {
     });
 
     it("rejeita cadastro sem perfil (não há como calcular o plano)", async () => {
-        const planoService = planoServiceFake();
-        const onboardingService = new OnboardingService(calculoService, planoService, new PlanoMapper());
+        const planoIaGenerator = planoServiceFake();
+        const onboardingService = new OnboardingService(engineService, planoIaGenerator, new PlanoMapper());
         const cadastro = cadastroBase({ perfil: null });
 
         await expect(onboardingService.receberCadastro(cadastro)).rejects.toThrow(ValidationError);
         await expect(onboardingService.receberCadastro(cadastro)).rejects.toThrow(
             "perfil é obrigatório para gerar o plano",
         );
-        expect(planoService.gerar).not.toHaveBeenCalled();
+        expect(planoIaGenerator.gerar).not.toHaveBeenCalled();
     });
 
-    it("propaga como ValidationError o erro de validação do CalculoService", async () => {
-        const planoService = planoServiceFake();
-        const onboardingService = new OnboardingService(calculoService, planoService, new PlanoMapper());
+    it("propaga como ValidationError o erro de validação do EngineService", async () => {
+        const planoIaGenerator = planoServiceFake();
+        const onboardingService = new OnboardingService(engineService, planoIaGenerator, new PlanoMapper());
         const cadastro = cadastroBase();
         cadastro.perfil!.diasPorSemana = 9;
 
@@ -158,6 +158,6 @@ describe("OnboardingService", () => {
         await expect(onboardingService.receberCadastro(cadastro)).rejects.toThrow(
             "diasPorSemana deve ser um inteiro entre 2 e 6",
         );
-        expect(planoService.gerar).not.toHaveBeenCalled();
+        expect(planoIaGenerator.gerar).not.toHaveBeenCalled();
     });
 });

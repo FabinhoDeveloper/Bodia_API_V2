@@ -1,8 +1,8 @@
 import ConflitoError from "../../src/errors/ConflitoError";
 import ValidationError from "../../src/errors/ValidationError";
-import CadastroRepository from "../../src/repositories/CadastroRepository";
+import UserRepository from "../../src/repositories/user.repository";
 import CadastroService from "../../src/services/CadastroService";
-import CalculoService from "../../src/services/CalculoService";
+import EngineService from "../../src/services/engine.service";
 import SenhaService from "../../src/services/SenhaService";
 import { CadastroRequest, PlanoDTO } from "../../src/types/plano.types";
 
@@ -70,17 +70,17 @@ function repositoryFake(emailExistente = false) {
     return {
         buscarPorEmail: jest.fn().mockResolvedValue(emailExistente ? { id: "existente" } : null),
         criar: jest.fn().mockResolvedValue({ id: "usuario-1" }),
-    } as unknown as CadastroRepository & { buscarPorEmail: jest.Mock; criar: jest.Mock };
+    } as unknown as UserRepository & { buscarPorEmail: jest.Mock; criar: jest.Mock };
 }
 
 // rounds baixo de propósito: bcrypt com custo real deixaria a suíte lenta.
 const senhaService = new SenhaService(4);
-const calculoService = new CalculoService();
+const engineService = new EngineService();
 
 function montar(repository = repositoryFake()) {
     return {
         repository,
-        service: new CadastroService(repository, calculoService, senhaService),
+        service: new CadastroService(repository, engineService, senhaService),
     };
 }
 
@@ -117,7 +117,7 @@ describe("CadastroService", () => {
 
         await service.cadastrar(cadastro);
         const { resultado } = repository.criar.mock.calls[0][0];
-        const esperado = calculoService.calcular(cadastro.perfil!);
+        const esperado = engineService.calcular(cadastro.perfil!);
 
         expect(resultado.metabolismo.tmb).toBe(esperado.metabolismo.tmb);
         expect(resultado.metabolismo.tdee).toBe(esperado.metabolismo.tdee);

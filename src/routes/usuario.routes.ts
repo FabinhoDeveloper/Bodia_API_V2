@@ -4,8 +4,8 @@ import { bcryptRounds } from "../config/auth";
 import prismaClient from "../config/prisma";
 import LoginController from "../controllers/LoginController";
 import PlanoConsultaController from "../controllers/PlanoConsultaController";
-import CadastroRepository from "../repositories/CadastroRepository";
-import PlanoConsultaRepository from "../repositories/PlanoConsultaRepository";
+import UserRepository from "../repositories/user.repository";
+import PlanRepository from "../repositories/plan.repository";
 import LoginService from "../services/LoginService";
 import PlanoConsultaService from "../services/PlanoConsultaService";
 import SenhaService from "../services/SenhaService";
@@ -13,11 +13,11 @@ import SenhaService from "../services/SenhaService";
 const router = Router();
 
 const loginController = new LoginController(
-    new LoginService(new CadastroRepository(prismaClient), new SenhaService(bcryptRounds)),
+    new LoginService(new UserRepository(prismaClient), new SenhaService(bcryptRounds)),
 );
 
 const planoConsultaController = new PlanoConsultaController(
-    new PlanoConsultaService(new PlanoConsultaRepository(prismaClient)),
+    new PlanoConsultaService(new PlanRepository(prismaClient)),
 );
 
 router.post("/login", loginController.entrar);

@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import benchmarkRoutes from "./benchmark.routes";
+import benchmarkRoutes from "../benchmark/benchmark.routes";
 import cadastroRoutes from "./cadastro.routes";
 import onboardingRoutes from "./onboarding.routes";
 import usuarioRoutes from "./usuario.routes";

@@ -1,5 +1,5 @@
 import AutenticacaoError from "../../src/errors/AutenticacaoError";
-import CadastroRepository from "../../src/repositories/CadastroRepository";
+import UserRepository from "../../src/repositories/user.repository";
 import LoginService from "../../src/services/LoginService";
 import SenhaService from "../../src/services/SenhaService";
 
@@ -20,7 +20,7 @@ async function montar(usuarioExiste = true) {
                   }
                 : null,
         ),
-    } as unknown as CadastroRepository & { buscarPorEmail: jest.Mock };
+    } as unknown as UserRepository & { buscarPorEmail: jest.Mock };
 
     return { repository, service: new LoginService(repository, senhaService) };
 }

@@ -1,5 +1,5 @@
 import AutenticacaoError from "../errors/AutenticacaoError";
-import CadastroRepository from "../repositories/CadastroRepository";
+import UserRepository from "../repositories/user.repository";
 import { LoginInput, UsuarioAutenticado } from "../types/auth.types";
 import SenhaService from "./SenhaService";
 
@@ -8,16 +8,16 @@ import SenhaService from "./SenhaService";
  * `usuarioId` devolvido e o usa para pedir o próprio plano.
  */
 export default class LoginService {
-    private readonly cadastroRepository;
+    private readonly userRepository;
     private readonly senhaService;
 
-    constructor(cadastroRepository: CadastroRepository, senhaService: SenhaService) {
-        this.cadastroRepository = cadastroRepository;
+    constructor(userRepository: UserRepository, senhaService: SenhaService) {
+        this.userRepository = userRepository;
         this.senhaService = senhaService;
     }
 
     async entrar({ email, senha }: LoginInput): Promise<UsuarioAutenticado> {
-        const usuario = await this.cadastroRepository.buscarPorEmail(email);
+        const usuario = await this.userRepository.buscarPorEmail(email);
 
         // E-mail inexistente e senha errada devolvem exatamente o mesmo erro.
         // Diferenciar transformaria a resposta num oráculo de quais e-mails

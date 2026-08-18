@@ -8,7 +8,7 @@ import {
     SessaoTreinoDTO,
 } from "../types/plano.types";
 
-// Nem o LLM nem o CalculoService produzem dia da semana ou horário — são
+// Nem o LLM nem o EngineService produzem dia da semana ou horário — são
 // apresentação. Ficam aqui, num lugar só, em vez de espalhados pelo app.
 const DIAS_POR_QUANTIDADE: Record<number, string[]> = {
     2: ["Segunda", "Quinta"],
@@ -32,7 +32,7 @@ const META_AGUA_ML = 2000;
 /**
  * Converte o plano cru (o que o LLM devolve, ou o fixture simulado) no formato
  * que o app consome, juntando três fontes: a seleção de itens, os números do
- * CalculoService e os dados dos catálogos (grupo muscular, kcal por 100 g).
+ * EngineService e os dados dos catálogos (grupo muscular, kcal por 100 g).
  *
  * É o único lugar que conhece o contrato da API — os dois geradores, IA e
  * simulado, passam por aqui.

@@ -1,5 +1,5 @@
 import NaoEncontradoError from "../errors/NaoEncontradoError";
-import PlanoConsultaRepository from "../repositories/PlanoConsultaRepository";
+import PlanRepository from "../repositories/plan.repository";
 import { MeuPlano } from "../types/plano.types";
 
 /**
@@ -10,14 +10,14 @@ import { MeuPlano } from "../types/plano.types";
  * marcada, treino concluído) ainda não é persistido e continua local no app.
  */
 export default class PlanoConsultaService {
-    private readonly planoConsultaRepository;
+    private readonly planRepository;
 
-    constructor(planoConsultaRepository: PlanoConsultaRepository) {
-        this.planoConsultaRepository = planoConsultaRepository;
+    constructor(planRepository: PlanRepository) {
+        this.planRepository = planRepository;
     }
 
     async buscar(usuarioId: string): Promise<MeuPlano> {
-        const usuario = await this.planoConsultaRepository.buscarPlanoAtivo(usuarioId);
+        const usuario = await this.planRepository.buscarPlanoAtivo(usuarioId);
 
         if (!usuario) {
             throw new NaoEncontradoError("Usuário não encontrado");

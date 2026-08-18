@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
  * peso mais recente, ficha de treino e ficha de alimentação — porque as telas
  * principais do app precisam de tudo junto ao abrir.
  */
-export default class PlanoConsultaRepository {
+export default class PlanRepository {
     private readonly prismaClient;
 
     constructor(prismaClient: PrismaClient) {

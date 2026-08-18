@@ -4,7 +4,7 @@
 // por não existir tabela pública equivalente. Não há valor nutricional/numérico
 // aqui — só nome, grupo muscular e biomecânica estrutural.
 //
-// `sessoes` usa exatamente os nomes que CalculoService.SPLIT_POR_DIAS produz.
+// `sessoes` usa exatamente os nomes que EngineService.SPLIT_POR_DIAS produz.
 // `articulacoes` lista as articulações sob carga, e casa com os chips de
 // restrição física do app (Joelho, Ombro, Lombar, Punho, Cotovelo) — é o que
 // permite remover exercícios contraindicados antes de o prompt ser montado.

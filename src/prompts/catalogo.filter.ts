@@ -68,8 +68,8 @@ export interface CatalogosFiltrados {
 
 /**
  * Filtra os catálogos de alimentos e exercícios (src/data/) pela restrição do
- * usuário, ANTES de o PromptService montar o prompt — chamado pelo
- * PlanoService logo no início de gerar().
+ * usuário, ANTES de o PlanoPrompt montar o prompt — chamado pelo
+ * PlanoIaGenerator logo no início de gerar().
  *
  * A restrição é aplicada aqui por código, removendo o item proibido da lista
  * que o modelo recebe, em vez de mandar a lista inteira e pedir para ele não
@@ -79,7 +79,7 @@ export interface CatalogosFiltrados {
  * alimento seguro) é aceitável; falso negativo (manter um proibido) não é —
  * por isso as regras erram para o lado de remover.
  */
-export default class CatalogoService {
+export default class CatalogoFilter {
     filtrarAlimentos(restricoes: string[]): Alimento[] {
         const categoriasProibidas = new Set<string>();
         const palavrasProibidas: string[] = [];

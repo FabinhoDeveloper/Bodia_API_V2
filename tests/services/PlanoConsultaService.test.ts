@@ -1,5 +1,5 @@
 import NaoEncontradoError from "../../src/errors/NaoEncontradoError";
-import PlanoConsultaRepository from "../../src/repositories/PlanoConsultaRepository";
+import PlanRepository from "../../src/repositories/plan.repository";
 import PlanoConsultaService from "../../src/services/PlanoConsultaService";
 
 function usuarioNoBanco(overrides: Record<string, unknown> = {}) {
@@ -88,7 +88,7 @@ function usuarioNoBanco(overrides: Record<string, unknown> = {}) {
 function montar(retorno: unknown = usuarioNoBanco()) {
     const repository = {
         buscarPlanoAtivo: jest.fn().mockResolvedValue(retorno),
-    } as unknown as PlanoConsultaRepository & { buscarPlanoAtivo: jest.Mock };
+    } as unknown as PlanRepository & { buscarPlanoAtivo: jest.Mock };
 
     return { repository, service: new PlanoConsultaService(repository) };
 }

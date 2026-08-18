@@ -9,9 +9,9 @@ import { RespostaLlmComMetricas } from "../types/benchmark.types";
  *
  * Não conhece treino, dieta nem nenhuma regra de negócio — só manda mensagem
  * e devolve texto (enviarMensagem) ou JSON (gerarJson, usado pelo
- * PlanoService). Todo o conteúdo enviado já vem pronto do PromptService.
+ * PlanoIaGenerator). Todo o conteúdo enviado já vem pronto do PlanoPrompt.
  */
-export default class LlmService {
+export default class AiService {
     private readonly criarClient;
     private readonly model;
     private readonly timeoutMs;
@@ -39,9 +39,10 @@ export default class LlmService {
      * max_tokens e AbortSignal de timeout) e devolve a resposta crua da API.
      *
      * Extraído para existir um único lugar com estes parâmetros — gerarJson
-     * (produção) e gerarJsonComMetricas (benchmark, src/services/PlanoService
-     * .gerarComMetricas) chamam este mesmo método, então o benchmark nunca
-     * pode divergir silenciosamente do que o app realmente usa.
+     * (produção) e gerarJsonComMetricas (benchmark, ver
+     * src/generators/plano-ia.generator.ts .gerarComMetricas) chamam este
+     * mesmo método, então o benchmark nunca pode divergir silenciosamente do
+     * que o app realmente usa.
      */
     private async criarChatCompletion(system: string, user: string) {
         return this.criarClient().chat.completions.create(
@@ -123,7 +124,7 @@ export default class LlmService {
     /**
      * Mesma chamada de gerarJson (via criarChatCompletion — mesmos parâmetros
      * de produção), mas para o endpoint de benchmark
-     * (src/services/BenchmarkGeracaoService.ts): não lança em resposta vazia
+     * (src/services/BenchmarkService.ts): não lança em resposta vazia
      * — devolve conteudo="" e deixa quem investiga decidir o que fazer — e
      * devolve as métricas cruas (usage, finish_reason, model, id) em vez de só
      * o texto, porque gerarJson descarta tudo isso depois de logar.

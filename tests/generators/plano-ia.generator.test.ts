@@ -1,8 +1,8 @@
-import CalculoService from "../../src/services/CalculoService";
-import CatalogoService from "../../src/services/CatalogoService";
-import LlmService from "../../src/services/LlmService";
-import PlanoService from "../../src/services/PlanoService";
-import PromptService from "../../src/services/PromptService";
+import EngineService from "../../src/services/engine.service";
+import CatalogoFilter from "../../src/prompts/catalogo.filter";
+import AiService from "../../src/services/ai.service";
+import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
+import PlanoPrompt from "../../src/prompts/plano.prompt";
 import { PerfilInput, PerfilParaPlano } from "../../src/types/perfil.types";
 
 const PERFIL: PerfilInput = {
@@ -49,33 +49,33 @@ function planoValido() {
 }
 
 function llmServiceFake(resposta: string) {
-    return { gerarJson: jest.fn().mockResolvedValue(resposta) } as unknown as LlmService & {
+    return { gerarJson: jest.fn().mockResolvedValue(resposta) } as unknown as AiService & {
         gerarJson: jest.Mock;
     };
 }
 
-describe("PlanoService", () => {
-    const resultado = new CalculoService().calcular(PERFIL);
+describe("PlanoIaGenerator", () => {
+    const resultado = new EngineService().calcular(PERFIL);
 
     function criarService(resposta: string) {
-        const llmService = llmServiceFake(resposta);
-        const planoService = new PlanoService(new CatalogoService(), new PromptService(), llmService);
-        return { planoService, llmService };
+        const aiService = llmServiceFake(resposta);
+        const planoIaGenerator = new PlanoIaGenerator(new CatalogoFilter(), new PlanoPrompt(), aiService);
+        return { planoIaGenerator, aiService };
     }
 
     it("devolve o plano quando os ids são válidos", async () => {
-        const { planoService } = criarService(JSON.stringify(planoValido()));
+        const { planoIaGenerator } = criarService(JSON.stringify(planoValido()));
 
-        const { plano } = await planoService.gerar(PERFIL_PLANO, resultado);
+        const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
         expect(plano.dieta.refeicoes[0].itens).toHaveLength(2);
         expect(plano.treino.sessoes[0].nome).toBe("Upper");
     });
 
     it("recalcula os macros a partir da TACO em vez de confiar no modelo", async () => {
-        const { planoService } = criarService(JSON.stringify(planoValido()));
+        const { planoIaGenerator } = criarService(JSON.stringify(planoValido()));
 
-        const { validacao } = await planoService.gerar(PERFIL_PLANO, resultado);
+        const { validacao } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
         // 100g de arroz + 200g de frango:
         // kcal = 128.26 + 318.38 = 446.6 | proteína = 2.52 + 64.06 = 66.6
@@ -85,9 +85,9 @@ describe("PlanoService", () => {
     });
 
     it("marca o plano como fora do limite quando o desvio é grande", async () => {
-        const { planoService } = criarService(JSON.stringify(planoValido()));
+        const { planoIaGenerator } = criarService(JSON.stringify(planoValido()));
 
-        const { validacao } = await planoService.gerar(PERFIL_PLANO, resultado);
+        const { validacao } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
         // Uma única refeição não fecha a meta do dia inteiro.
         expect(validacao.dentroDoLimite).toBe(false);
@@ -97,9 +97,9 @@ describe("PlanoService", () => {
     it("rejeita alimento que não existe no catálogo (alucinação de id)", async () => {
         const plano = planoValido();
         plano.dieta.refeicoes[0].itens[0].alimentoId = 999999;
-        const { planoService } = criarService(JSON.stringify(plano));
+        const { planoIaGenerator } = criarService(JSON.stringify(plano));
 
-        await expect(planoService.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+        await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
             /alimento fora do catálogo permitido/,
         );
     });
@@ -107,9 +107,9 @@ describe("PlanoService", () => {
     it("rejeita exercício que não existe no catálogo", async () => {
         const plano = planoValido();
         plano.treino.sessoes[0].exercicios[0].exercicioId = 999999;
-        const { planoService } = criarService(JSON.stringify(plano));
+        const { planoIaGenerator } = criarService(JSON.stringify(plano));
 
-        await expect(planoService.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+        await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
             /exercício fora do catálogo permitido/,
         );
     });
@@ -117,10 +117,10 @@ describe("PlanoService", () => {
     // O catálogo filtrado é a fronteira de segurança: um alimento proibido não
     // pode entrar nem que o modelo cite o id correto dele.
     it("rejeita alimento proibido pela restrição, mesmo com id real", async () => {
-        const { planoService } = criarService(JSON.stringify(planoValido()));
+        const { planoIaGenerator } = criarService(JSON.stringify(planoValido()));
 
         await expect(
-            planoService.gerar(
+            planoIaGenerator.gerar(
                 { restricoesAlimentares: ["Vegano"], restricoesFisicas: [] },
                 resultado,
             ),
@@ -128,17 +128,17 @@ describe("PlanoService", () => {
     });
 
     it("rejeita JSON malformado", async () => {
-        const { planoService } = criarService("isto não é json");
+        const { planoIaGenerator } = criarService("isto não é json");
 
-        await expect(planoService.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+        await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
             "A IA retornou um JSON inválido",
         );
     });
 
     it("rejeita plano sem dieta ou sem treino", async () => {
-        const { planoService } = criarService(JSON.stringify({ dieta: { refeicoes: [] } }));
+        const { planoIaGenerator } = criarService(JSON.stringify({ dieta: { refeicoes: [] } }));
 
-        await expect(planoService.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+        await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
             "A IA retornou um plano sem dieta ou sem treino",
         );
     });

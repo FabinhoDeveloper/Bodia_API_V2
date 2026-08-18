@@ -1,27 +1,27 @@
 import { Request, Response } from "express";
 
-import BenchmarkGeracaoService from "../services/BenchmarkGeracaoService";
+import BenchmarkService from "./benchmark.service";
 
 /**
  * Ponte HTTP do benchmark de geração (GET /api/teste-geracao). Não usa
- * `.catch(next)` como os outros controllers: BenchmarkGeracaoService.executar
+ * `.catch(next)` como os outros controllers: BenchmarkService.executar
  * já não lança em falha de IA (devolve `success: false` com o erro descrito
- * no corpo — ver PlanoService.gerarComMetricas), então só chega aqui uma
+ * no corpo — ver PlanoIaGenerator.gerarComMetricas), então só chega aqui uma
  * falha realmente inesperada, e para essa o endpoint de benchmark precisa
  * devolver tempo/erro estruturados, não o `{ message }` genérico do
  * errorHandler global.
  */
 export default class BenchmarkController {
-    private readonly benchmarkGeracaoService;
+    private readonly benchmarkService;
 
-    constructor(benchmarkGeracaoService: BenchmarkGeracaoService) {
-        this.benchmarkGeracaoService = benchmarkGeracaoService;
+    constructor(benchmarkService: BenchmarkService) {
+        this.benchmarkService = benchmarkService;
     }
 
     testarGeracao = (_req: Request, res: Response) => {
         const inicioTotal = performance.now();
 
-        this.benchmarkGeracaoService
+        this.benchmarkService
             .executar()
             .then((resultado) => res.json(resultado))
             .catch((erro: unknown) => {

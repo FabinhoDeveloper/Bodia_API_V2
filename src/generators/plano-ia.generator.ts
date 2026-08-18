@@ -8,58 +8,58 @@ import {
     PlanoValidado,
     Validacao,
 } from "../types/plano.types";
-import CatalogoService from "./CatalogoService";
-import LlmService from "./LlmService";
-import PromptService from "./PromptService";
+import CatalogoFilter from "../prompts/catalogo.filter";
+import AiService from "../services/ai.service";
+import PlanoPrompt from "../prompts/plano.prompt";
 
 /**
  * Orquestra a geração do plano pela IA (chamado por OnboardingService, depois
- * que o CalculoService já produziu o ResultadoCalculo) e é o ponto onde a
+ * que o EngineService já produziu o ResultadoCalculo) e é o ponto onde a
  * resposta do modelo é conferida, nunca aceita de graça:
  *
- *   1. CatalogoService filtra alimentos/exercícios pela restrição do usuário;
- *   2. PromptService monta { system, user } a partir do resultado + catálogos;
- *   3. LlmService.gerarJson chama a DeepSeek e devolve o JSON como string;
+ *   1. CatalogoFilter filtra alimentos/exercícios pela restrição do usuário;
+ *   2. PlanoPrompt monta { system, user } a partir do resultado + catálogos;
+ *   3. AiService.gerarJson chama a DeepSeek e devolve o JSON como string;
  *   4. parsear() converte a string em PlanoGerado (erro se não for JSON válido
  *      ou faltar dieta/treino);
  *   5. validarIds() rejeita qualquer alimentoId/exercicioId que não exista no
  *      catálogo filtrado — alucinação de item;
  *   6. validarMacros() recalcula kcal/macros a partir da TACO (não confia no
  *      número que a IA disse) e mede o desvio contra a meta do
- *      CalculoService — alucinação de número vira desvio medido, não erro
+ *      EngineService — alucinação de número vira desvio medido, não erro
  *      silencioso.
  *
  * Só depois de passar pelas duas validações o { plano, validacao } volta para
  * quem chamou.
  */
-export default class PlanoService {
+export default class PlanoIaGenerator {
     // Limite de referência: a fundamentação teórica cita desvio calórico inferior
     // a 2% como o resultado alcançável combinando LLM e base nutricional
     // estruturada via prompt engineering (Khamesian apud SRIVASTAVA et al., 2025).
     private static readonly DESVIO_ACEITAVEL_PERCENTUAL = 5;
 
-    private readonly catalogoService;
-    private readonly promptService;
-    private readonly llmService;
+    private readonly catalogoFilter;
+    private readonly planoPrompt;
+    private readonly aiService;
 
     constructor(
-        catalogoService: CatalogoService,
-        promptService: PromptService,
-        llmService: LlmService,
+        catalogoFilter: CatalogoFilter,
+        planoPrompt: PlanoPrompt,
+        aiService: AiService,
     ) {
-        this.catalogoService = catalogoService;
-        this.promptService = promptService;
-        this.llmService = llmService;
+        this.catalogoFilter = catalogoFilter;
+        this.planoPrompt = planoPrompt;
+        this.aiService = aiService;
     }
 
     async gerar(perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado> {
-        const alimentos = this.catalogoService.filtrarAlimentos(perfil.restricoesAlimentares);
-        const exercicios = this.catalogoService.filtrarExercicios(
+        const alimentos = this.catalogoFilter.filtrarAlimentos(perfil.restricoesAlimentares);
+        const exercicios = this.catalogoFilter.filtrarExercicios(
             perfil.restricoesFisicas,
             resultado.treino.sessoes.map((sessao) => sessao.nome),
         );
 
-        const { system, user } = this.promptService.montar({
+        const { system, user } = this.planoPrompt.montar({
             resultado,
             alimentos,
             exercicios,
@@ -67,7 +67,7 @@ export default class PlanoService {
             restricoesFisicas: perfil.restricoesFisicas,
         });
 
-        const resposta = await this.llmService.gerarJson(system, user);
+        const resposta = await this.aiService.gerarJson(system, user);
         const plano = this.parsear(resposta);
 
         this.validarIds(plano, alimentos, exercicios);
@@ -77,25 +77,25 @@ export default class PlanoService {
     }
 
     /**
-     * Mesmo caminho de gerar() — mesmo CatalogoService, mesmo PromptService,
+     * Mesmo caminho de gerar() — mesmo CatalogoFilter, mesmo PlanoPrompt,
      * mesmas validações privadas (parsear/validarIds/validarMacros) — só troca
-     * llmService.gerarJson (que só devolve texto e lança em resposta vazia)
+     * aiService.gerarJson (que só devolve texto e lança em resposta vazia)
      * por gerarJsonComMetricas (que devolve usage/finish_reason/model e nunca
      * lança em resposta vazia). Não é chamado por gerar() nem pelo
      * OnboardingService; existe só para o endpoint de benchmark
-     * (GET /api/teste-geracao, ver BenchmarkGeracaoService).
+     * (GET /api/teste-geracao, ver BenchmarkService).
      */
     async gerarComMetricas(
         perfil: PerfilParaPlano,
         resultado: ResultadoCalculo,
     ): Promise<ResultadoBenchmarkGeracao> {
         const inicioPrep = performance.now();
-        const alimentos = this.catalogoService.filtrarAlimentos(perfil.restricoesAlimentares);
-        const exercicios = this.catalogoService.filtrarExercicios(
+        const alimentos = this.catalogoFilter.filtrarAlimentos(perfil.restricoesAlimentares);
+        const exercicios = this.catalogoFilter.filtrarExercicios(
             perfil.restricoesFisicas,
             resultado.treino.sessoes.map((sessao) => sessao.nome),
         );
-        const { system, user } = this.promptService.montar({
+        const { system, user } = this.planoPrompt.montar({
             resultado,
             alimentos,
             exercicios,
@@ -108,7 +108,7 @@ export default class PlanoService {
         const inicioLlm = performance.now();
         let llmResultado;
         try {
-            llmResultado = await this.llmService.gerarJsonComMetricas(system, user);
+            llmResultado = await this.aiService.gerarJsonComMetricas(system, user);
         } catch (erro) {
             // Mesmo em erro/timeout, o tempo até a falha é justamente o dado
             // que o benchmark quer capturar — não descartar aqui.
@@ -265,7 +265,7 @@ export default class PlanoService {
         const gordura = this.compararComMeta(resultado.macros.gordura.g, total.gordura);
 
         const dentroDoLimite = [calorias, proteina, carboidrato, gordura].every(
-            (macro) => Math.abs(macro.desvioPercentual) <= PlanoService.DESVIO_ACEITAVEL_PERCENTUAL,
+            (macro) => Math.abs(macro.desvioPercentual) <= PlanoIaGenerator.DESVIO_ACEITAVEL_PERCENTUAL,
         );
 
         return { calorias, proteina, carboidrato, gordura, dentroDoLimite };
