@@ -1,29 +1,8 @@
-import { NivelAtividade, NivelExperiencia, Objetivo, PrismaClient, Sexo } from "@prisma/client";
+import { PrismaClient, Sexo } from "@prisma/client";
 
+import PerfilMapper from "../mappers/perfil.mapper";
 import { ContaInput, PerfilOnboardingInput, ResultadoCalculo } from "../types/perfil.types";
 import { PlanoDTO } from "../types/plano.types";
-
-// O app manda minúsculo ("sedentario", "perder") e o banco usa enum maiúsculo.
-// A tradução mora aqui, num lugar só, em vez de espalhada pelos services.
-const ATIVIDADE: Record<string, NivelAtividade> = {
-    sedentario: "SEDENTARIO",
-    leve: "LEVE",
-    moderado: "MODERADO",
-    intenso: "INTENSO",
-    atleta: "ATLETA",
-};
-
-const EXPERIENCIA: Record<string, NivelExperiencia> = {
-    iniciante: "INICIANTE",
-    intermediario: "INTERMEDIARIO",
-    avancado: "AVANCADO",
-};
-
-const OBJETIVO: Record<string, Objetivo> = {
-    perder: "PERDER",
-    manter: "MANTER",
-    ganhar: "GANHAR",
-};
 
 export interface CadastroCompleto {
     conta: ContaInput;
@@ -37,9 +16,11 @@ export interface CadastroCompleto {
 
 export default class UserRepository {
     private readonly prismaClient;
+    private readonly perfilMapper;
 
-    constructor(prismaClient: PrismaClient) {
+    constructor(prismaClient: PrismaClient, perfilMapper: PerfilMapper) {
         this.prismaClient = prismaClient;
+        this.perfilMapper = perfilMapper;
     }
 
     buscarPorEmail(email: string) {
@@ -86,9 +67,9 @@ export default class UserRepository {
                 dataNascimento: new Date(perfil.dataNascimento),
                 alturaCm: perfil.altura,
                 percentualGordura: perfil.percentualGordura,
-                nivelAtividade: ATIVIDADE[perfil.nivelAtividade],
-                nivelExperiencia: EXPERIENCIA[perfil.nivelExperiencia],
-                objetivo: OBJETIVO[perfil.objetivo],
+                nivelAtividade: this.perfilMapper.nivelAtividade(perfil.nivelAtividade),
+                nivelExperiencia: this.perfilMapper.nivelExperiencia(perfil.nivelExperiencia),
+                objetivo: this.perfilMapper.objetivo(perfil.objetivo),
                 diasPorSemana: perfil.diasPorSemana,
                 numeroRefeicoes: perfil.numeroRefeicoes ?? 4,
 

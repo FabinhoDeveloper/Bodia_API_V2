@@ -3,7 +3,7 @@ import bcrypt from "bcrypt";
 import ConflitoError from "../../src/errors/ConflitoError";
 import ValidationError from "../../src/errors/ValidationError";
 import UserRepository from "../../src/repositories/user.repository";
-import CadastroService from "../../src/services/CadastroService";
+import UserService from "../../src/services/user.service";
 import EngineService from "../../src/services/engine.service";
 import AuthService from "../../src/services/auth.service";
 import { CadastroRequest, PlanoDTO } from "../../src/types/plano.types";
@@ -83,11 +83,11 @@ const engineService = new EngineService();
 function montar(repository = repositoryFake()) {
     return {
         repository,
-        service: new CadastroService(repository, engineService, authService),
+        service: new UserService(repository, engineService, authService),
     };
 }
 
-describe("CadastroService", () => {
+describe("UserService", () => {
     let logSpy: jest.SpyInstance;
 
     beforeEach(() => {

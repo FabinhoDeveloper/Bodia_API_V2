@@ -20,7 +20,7 @@ import EngineService from "./engine.service";
  * Já a SELEÇÃO de alimentos e exercícios vem do payload — essa parte é escolha
  * da IA e regenerar daria um plano diferente do que o usuário aprovou.
  */
-export default class CadastroService {
+export default class UserService {
     private readonly userRepository;
     private readonly engineService;
     private readonly authService;
