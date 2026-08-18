@@ -1,18 +1,19 @@
 # BodIA — Backend
 
-API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), autenticação futura com **bcrypt** (hash de senha) e **jsonwebtoken** (sessão). Hoje a API recebe o cadastro do app, calcula o plano no motor determinístico (`CalculoService`) e já conversa com o LLM (`LlmService`) — mas **ainda não há auth, persistência nem o prompt real da IA**.
+API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro e devolve o plano ao app — **ainda não há JWT nem validação campo a campo do payload**.
 
-Qualquer recurso novo (auth, usuário, perfil, treino, dieta...) **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
+Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
 
 ## Stack
 
 - **TypeScript** (strict mode) rodando com `tsx` em dev, compilado com `tsc` para produção
 - **Express 4** — HTTP layer
 - **Prisma 6** — ORM, PostgreSQL como banco (`docker-compose.yml` sobe um Postgres local)
-- **bcrypt** — hash de senha (reservado para quando existir auth)
+- **bcrypt** — hash de senha, usado por `auth.service`
 - **jsonwebtoken** — emissão/validação de token (reservado para quando existir auth)
 - **cors**, **dotenv** — infraestrutura básica de app
-- **Jest** (`ts-jest`) — testes unitários
+- **Jest** (`ts-jest`) — testes
+- **supertest** — testes de rota (`tests/app.smoke.test.ts`)
 - **`openai` SDK** apontado para a **DeepSeek** (`deepseek-v4-pro`) — a API da DeepSeek é compatível com a interface Chat Completions da OpenAI, então o SDK oficial é reaproveitado só trocando a `baseURL`
 
 ## Arquitetura em camadas
@@ -23,12 +24,30 @@ Route → Controller → Service → Repository → PrismaClient
 
 Cada camada só conhece a camada imediatamente abaixo. Toda dependência é passada via **construtor** (injeção de dependência manual — sem container/IoC, sem decorators). O ponto de composição (`new X(new Y(...))`) fica no arquivo de rota daquele recurso.
 
+Fora dessa linha principal existem **colaboradores**: classes puras que um service injeta para não inchar. Ver "O que entra em `services/`" abaixo.
+
+### Tipos (`src/types/`)
+
+Interfaces e type aliases compartilhados por mais de uma camada. **Nenhuma classe.**
+
+Existem porque tipo declarado junto da classe que o produz força dependência para cima: o repository precisa de `ResultadoCalculo` para gravar a ficha, e importá-lo do service faria o repository depender do service. Com os tipos aqui, `repositories/` e `data/` não importam nada de `services/`.
+
+| Arquivo | O que guarda |
+|---|---|
+| `perfil.types.ts` | `PerfilInput`, `PerfilOnboardingInput`, `ContaInput`, `ResultadoCalculo` |
+| `plano.types.ts` | `PlanoGerado`, `PlanoDTO`, `MeuPlano`, `Validacao`, `GeradorDePlano`, os payloads das rotas |
+| `auth.types.ts` | `LoginInput`, `UsuarioAutenticado` |
+| `registro.types.ts` | registros de refeição/hidratação/treino (ainda sem model no Prisma) |
+| `benchmark.types.ts` | só do endpoint temporário — sai junto com ele |
+
 ### Repository (`src/repositories/`)
 
 Única camada que importa `PrismaClient`/`@prisma/client`. Encapsula o acesso a dados de **uma** entidade. Recebe o `PrismaClient` no construtor (nunca instancia um novo — sempre reutiliza o singleton de `src/config/prisma.ts`).
 
+São dois: `user.repository.ts` (busca por e-mail e o create aninhado do cadastro inteiro) e `plan.repository.ts` (leitura do plano ativo).
+
 ```ts
-// src/repositories/UserRepository.ts
+// src/repositories/user.repository.ts
 import { PrismaClient } from "@prisma/client";
 
 export default class UserRepository {
@@ -42,83 +61,108 @@ export default class UserRepository {
 
 ### Service (`src/services/`)
 
-Contém a regra de negócio. Recebe o(s) Repository(ies) que precisa no construtor. Nunca importa `PrismaClient`/Express diretamente — não conhece HTTP nem banco, só a interface do repository.
+Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que precisa no construtor. Nunca importa `PrismaClient`/Express diretamente — não conhece HTTP nem banco, só a interface do repository.
 
-```ts
-// src/services/UserService.ts
-import UserRepository from "../repositories/UserRepository";
+**São oito, um por domínio.** Esta lista não cresce sem alinhar antes:
 
-export default class UserService {
-    private readonly userRepository;
+| Service | Domínio | Estado |
+|---|---|---|
+| `engine.service.ts` | motor determinístico: TMB, TDEE, meta calórica, macros, split | pronto |
+| `auth.service.ts` | login e hash de senha | pronto (sem JWT) |
+| `user.service.ts` | cadastro; futuramente atualização, exclusão e perfil | cadastro pronto |
+| `plan.service.ts` | gerar, consultar e (via user) persistir o plano | pronto |
+| `ai.service.ts` | comunicação com a DeepSeek: envia prompt, devolve resposta | pronto |
+| `refeicao.service.ts` | registro/histórico de refeições | **esqueleto** |
+| `hidratacao.service.ts` | registro/histórico de hidratação | **esqueleto** |
+| `treino.service.ts` | registro de treino e exercícios | **esqueleto** |
 
-    constructor(userRepository: UserRepository) {
-        this.userRepository = userRepository;
-    }
-}
-```
+Os três esqueletos lançam `"não implementado"` e **não têm rota**: dependem de model que ainda não existe no `schema.prisma`. O que falta em cada um está no cabeçalho do arquivo.
+
+### O que entra em `services/`
+
+Só classe que é **ponto de entrada de um domínio**. O resto é colaborador e mora fora:
+
+| Pasta | O que é | Exemplos |
+|---|---|---|
+| `mappers/` | tradução entre formato interno e contrato da API | `plano.mapper.ts` (escrita), `meu-plano.mapper.ts` (leitura), `perfil.mapper.ts` (string → enum) |
+| `prompts/` | construção do prompt e o filtro que o alimenta | `plano.prompt.ts`, `catalogo.filter.ts` |
+| `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts` |
+| `benchmark/` | endpoint temporário, service + controller + rota juntos | `benchmark.*.ts` |
+
+A regra prática: **se a classe não é chamada direto por um controller, provavelmente é colaborador.** Criar um service novo só porque uma classe ficou grande recria o problema que essa organização resolveu — services que não eram domínio nenhum.
+
+`benchmark/` está isolado numa pasta de propósito: quando o caminho da IA estabilizar, sai a pasta inteira.
 
 ### Controller (`src/controllers/`)
 
 Faz a ponte HTTP ↔ Service: lê `req`, chama o Service, escreve `res`. Não contém regra de negócio. Métodos que viram handler de rota são **arrow function properties** (garante o `this` correto quando passados direto pro Express, sem precisar de `.bind`).
 
+Um controller por service que tem rota — hoje `auth`, `user` e `plan`.
+
 ```ts
-// exemplo ilustrativo do padrão — não corresponde a um arquivo real
-import { Request, Response } from "express";
-import ExemploService from "../services/ExemploService";
+// src/controllers/plan.controller.ts
+import { NextFunction, Request, Response } from "express";
 
-export default class ExemploController {
-    private readonly exemploService;
+import PlanService from "../services/plan.service";
 
-    constructor(exemploService: ExemploService) {
-        this.exemploService = exemploService;
+export default class PlanController {
+    private readonly planService;
+
+    constructor(planService: PlanService) {
+        this.planService = planService;
     }
 
-    check = (req: Request, res: Response) => {
-        res.json(this.exemploService.check());
+    buscar = (req: Request, res: Response, next: NextFunction) => {
+        this.planService
+            .consultar(req.params.usuarioId)
+            .then((plano) => res.json(plano))
+            .catch(next);
     };
 }
 ```
 
 ### Route (`src/routes/`)
 
-Um arquivo `<recurso>.routes.ts` por recurso. Monta a cadeia de dependências (repository → service → controller) e registra os endpoints. `src/routes/index.ts` agrega todos os routers de recurso e é montado em `/api` no `app.ts`.
+Um arquivo `<recurso>.routes.ts` por recurso (`auth`, `user`, `plan`). Monta a cadeia de dependências e registra os endpoints. `src/routes/index.ts` agrega os routers e é montado em `/api` no `app.ts`.
 
 ```ts
-// exemplo ilustrativo do padrão — não corresponde a um arquivo real
+// src/routes/auth.routes.ts
 import { Router } from "express";
-import ExemploController from "../controllers/ExemploController";
-import ExemploService from "../services/ExemploService";
+
+import { bcryptRounds } from "../config/auth";
+import prismaClient from "../config/prisma";
+import AuthController from "../controllers/auth.controller";
+import PerfilMapper from "../mappers/perfil.mapper";
+import UserRepository from "../repositories/user.repository";
+import AuthService from "../services/auth.service";
 
 const router = Router();
-const exemploController = new ExemploController(new ExemploService());
 
-router.get("/exemplo", exemploController.check);
+const authController = new AuthController(
+    new AuthService(new UserRepository(prismaClient, new PerfilMapper()), bcryptRounds),
+);
+
+router.post("/login", authController.entrar);
 
 export default router;
 ```
 
-Quando um recurso precisar de Prisma, importe o singleton em vez de criar um `PrismaClient` novo:
-
-```ts
-import prismaClient from "../config/prisma";
-import UserRepository from "../repositories/UserRepository";
-
-const userRepository = new UserRepository(prismaClient);
-```
+Sempre importe o singleton do Prisma em vez de criar um `PrismaClient` novo.
 
 ## Convenções
 
-- **Um arquivo por classe**, nome do arquivo = nome da classe (`PascalCase.ts`), `export default class`.
+- **Um arquivo por classe**, `export default class`. Nome do arquivo em **kebab-case com sufixo da camada** — `plan.service.ts`, `user.controller.ts`, `user.repository.ts`, `plano.mapper.ts`, `auth.routes.ts`, `validation.error.ts`. A classe dentro continua em PascalCase (`PlanService`) — é identificador TypeScript, não nome de arquivo.
 - Nenhuma camada pula a de baixo (controller nunca chama repository direto, service nunca importa Express/Prisma).
 - Sem container de DI — a composição é explícita e manual no arquivo de rota.
-- Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/errorHandler.ts`) captura. Para entrada inválida, lançar `ValidationError` (`src/errors/ValidationError.ts`), que o middleware traduz em **400** com a mensagem do erro; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
+- **Tipo compartilhado vai para `src/types/`**, nunca exportado de um service. Tipo que só interessa ao próprio arquivo pode ficar nele.
+- Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/error-handler.ts`) captura. `ValidationError` → **400**, `AutenticacaoError` → **401**, `NaoEncontradoError` → **404**, `ConflitoError` → **409**; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
 - Clientes de serviços externos ficam em `src/config/<provider>.ts` e são injetados por construtor (`prisma.ts`, `deepseek.ts`). Quando o SDK valida credencial no construtor — caso do `openai` —, exportar uma **factory** (`getDeepseekClient()`) em vez do cliente pronto: assim a falta da chave não derruba o servidor no boot, só falha a rota que usa aquele serviço.
-- **Express 4 não encaminha rejeição de Promise para o `errorHandler`.** Handler que chama Service assíncrono precisa propagar na mão — `.then(...).catch(next)` (ver `OnboardingController`). Sem isso a requisição fica pendurada até dar timeout em vez de virar 500.
+- **Express 4 não encaminha rejeição de Promise para o `errorHandler`.** Handler que chama Service assíncrono precisa propagar na mão — `.then(...).catch(next)` (ver `plan.controller.ts`). Sem isso a requisição fica pendurada até dar timeout em vez de virar 500.
 
 ## Testes (`tests/`)
 
-Testes ficam **fora de `src/`**, numa pasta própria `tests/` que espelha a estrutura de `src/` (ex.: `src/services/CalculoService.ts` → `tests/services/CalculoService.test.ts`). Isso mantém `src/` só com código de produção — o `tsconfig.json` principal (`rootDir: "src"`) não inclui `tests/`, então `npm run build`/`tsc --noEmit` não enxerga os testes.
+Testes ficam **fora de `src/`**, numa pasta própria `tests/` que espelha a estrutura de `src/` (ex.: `src/services/engine.service.ts` → `tests/services/engine.service.test.ts`). Isso mantém `src/` só com código de produção — o `tsconfig.json` principal (`rootDir: "src"`) não inclui `tests/`, então `npm run build`/`tsc --noEmit` não enxerga os testes.
 
 O Jest usa um tsconfig próprio, `tsconfig.jest.json` (estende o principal, mas com `rootDir` aberto e `include: ["src", "tests"]`), configurado em `jest.config.js` via `transform`. Isso é necessário porque o TypeScript recusa compilar um arquivo fora do `rootDir` do projeto principal.
 
@@ -126,40 +170,74 @@ O Jest usa um tsconfig próprio, `tsconfig.jest.json` (estende o principal, mas 
 npm test              # roda tudo em tests/**/*.test.ts
 ```
 
-Convenção de teste: `describe` pelo nome da classe, `it`/`it.each` descrevendo o comportamento em português, um arquivo de teste por classe, mesmo nome (`<Nome>.test.ts`).
+Convenção de teste: `describe` pelo nome da classe, `it`/`it.each` descrevendo o comportamento em português, um arquivo de teste por classe, mesmo nome (`<arquivo>.test.ts`).
+
+**`tests/app.smoke.test.ts` é o único que exercita o app inteiro** — `app.ts`, a composição de dependências dos arquivos de rota, o `errorHandler` e o `notFoundHandler`. Os demais são unitários com fakes e, por isso, não pegam erro de wiring: um refactor pode compilar, passar em todos eles e ainda assim quebrar todos os endpoints.
+
+Ele não toca no banco — as rotas que cobre ou não usam Prisma, ou falham na validação antes de chegar nele. Para as que precisam de banco, ele percorre o router do Express e confere que a rota continua **registrada**; a ausência de uma rota é detectável mesmo sem poder chamá-la.
+
+**Ao adicionar uma rota, acrescente-a à lista desse teste.**
 
 ## Estrutura de pastas
 
 ```
 backend/
   prisma/
-    schema.prisma        # datasource + generator + models
+    schema.prisma            # datasource + generator + models
   src/
     config/
-      prisma.ts           # PrismaClient singleton
-      deepseek.ts         # cliente da IA (factory) + modelo
-    controllers/
-    services/
+      prisma.ts               # PrismaClient singleton
+      deepseek.ts             # cliente da IA (factory) + modelo + flag SIMULAR_IA
+      auth.ts                 # custo do bcrypt
+    types/                    # interfaces compartilhadas — nenhuma classe
+      perfil.types.ts  plano.types.ts  auth.types.ts
+      registro.types.ts  benchmark.types.ts
+    services/                 # OITO, um por domínio
+      engine.service.ts       # motor determinístico (puro)
+      auth.service.ts         # login + hash de senha
+      user.service.ts         # cadastro
+      plan.service.ts         # gerar e consultar o plano
+      ai.service.ts           # adaptador DeepSeek
+      refeicao.service.ts     # esqueleto — falta model
+      hidratacao.service.ts   # esqueleto — falta model
+      treino.service.ts       # esqueleto — falta model
+    generators/               # quem monta o plano (interface GeradorDePlano)
+      plano-ia.generator.ts   plano-simulado.generator.ts
+      validador-macros.ts     # conferência de macros, usada pelos dois
+    mappers/
+      plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
+      meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
+      perfil.mapper.ts        # string do app -> enum do Prisma
+    prompts/
+      plano.prompt.ts         # system + user do LLM
+      catalogo.filter.ts      # aplica as restrições ANTES do prompt
     repositories/
-    errors/
-      ValidationError.ts  # erro de entrada inválida -> 400 no errorHandler
-    data/
-      alimentos.ts        # GERADO por scripts/importar-taco.ts — não editar
-      exercicios.ts       # catálogo escrito à mão
+      user.repository.ts      plan.repository.ts
+    controllers/
+      auth.controller.ts      user.controller.ts      plan.controller.ts
     routes/
-      index.ts            # agrega os routers de recurso, montado em /api
+      auth.routes.ts  user.routes.ts  plan.routes.ts
+      index.ts                # agrega os routers, montado em /api
+    benchmark/                # endpoint TEMPORÁRIO, isolado
+      benchmark.service.ts    benchmark.controller.ts   benchmark.routes.ts
+    errors/
+      validation.error.ts     autenticacao.error.ts
+      nao-encontrado.error.ts conflito.error.ts
+    data/
+      alimentos.ts            # GERADO por scripts/importar-taco.ts — não editar
+      exercicios.ts           # catálogo escrito à mão
+      plano-simulado.ts       # fixture usado quando SIMULAR_IA=true
     middlewares/
-      errorHandler.ts
-      notFoundHandler.ts
-    app.ts                 # cria o express app, registra middlewares/rotas
-    server.ts              # bootstrap: carrega .env e sobe o listener
+      error-handler.ts        not-found-handler.ts
+    app.ts                    # cria o express app, registra middlewares/rotas
+    server.ts                 # bootstrap: carrega .env e sobe o listener
   scripts/
-    importar-taco.ts       # regenera src/data/alimentos.ts a partir da TACO
-    deploy.sh              # roteiro executado NA EC2 pelo GitHub Actions
+    importar-taco.ts          # regenera src/data/alimentos.ts a partir da TACO
+    deploy.sh                 # roteiro executado NA EC2 pelo GitHub Actions
   .github/workflows/
-    deploy.yml             # esteira: build + testes -> SSH -> PM2
-  tests/                   # espelha src/, só arquivos *.test.ts
-  docker-compose.yml        # Postgres local (bodia/bodia/bodia, porta 5432)
+    deploy.yml                # esteira: build + testes -> SSH -> PM2
+  tests/                      # espelha src/, só arquivos *.test.ts
+  docker-compose.yml          # Postgres local (bodia/bodia/bodia, porta 5432)
   jest.config.js / tsconfig.jest.json
   .env / .env.example
 ```
@@ -245,70 +323,78 @@ Para publicar sem um commit novo (rollback manual, ou reexecutar um deploy que f
 
 ## Como adicionar um recurso novo
 
+Antes de criar um service, confira se o recurso não pertence a um dos oito que já existem — o padrão é **estender um domínio**, não abrir outro.
+
 1. Modelar a entidade em `prisma/schema.prisma` e rodar `npm run prisma:migrate`.
-2. Criar `src/repositories/<Nome>Repository.ts` (recebe `PrismaClient`, métodos de acesso a dados).
-3. Criar `src/services/<Nome>Service.ts` (recebe o Repository, regra de negócio).
-4. Criar `src/controllers/<Nome>Controller.ts` (recebe o Service, handlers HTTP).
-5. Criar `src/routes/<nome>.routes.ts` (monta a cadeia e declara os endpoints) e registrar em `src/routes/index.ts`.
-6. Criar `tests/<camada>/<Nome>.test.ts` cobrindo o que foi adicionado.
+2. Declarar os tipos compartilhados em `src/types/<dominio>.types.ts`.
+3. Criar `src/repositories/<dominio>.repository.ts` (recebe `PrismaClient`, métodos de acesso a dados).
+4. Estender o service do domínio, ou — se for domínio novo mesmo — criar `src/services/<dominio>.service.ts`.
+5. Criar/estender `src/controllers/<dominio>.controller.ts` e `src/routes/<dominio>.routes.ts`, registrando em `src/routes/index.ts`.
+6. Criar `tests/<camada>/<arquivo>.test.ts` cobrindo o que foi adicionado, e acrescentar a rota nova à lista de `tests/app.smoke.test.ts`.
 
-## Motor determinístico (`CalculoService`)
+Se a lógica nova é tradução de formato, construção de prompt ou uma estratégia intercambiável, ela é **colaborador** — vai para `mappers/`, `prompts/` ou `generators/`, não para `services/`.
 
-`src/services/CalculoService.ts` já implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/CalculoService.test.ts`.
+## Motor determinístico (`engine.service.ts`)
 
-Quem o consome é o `OnboardingService`, que o recebe por construtor (composto em `routes/onboarding.routes.ts`). Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
+`src/services/engine.service.ts` implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/engine.service.test.ts`.
+
+Consumido por `plan.service` (gerar), `user.service` (recalcular no cadastro) e pelo benchmark. Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
 
 ## Geração do plano pela IA
 
 O fluxo completo de `POST /api/onboarding` é:
 
 ```
-CalculoService  →  CatalogoService  →  PromptService  →  LlmService  →  PlanoService (valida)
-   os números       filtra restrições    monta o prompt     DeepSeek       confere as contas
+engine.service → catalogo.filter → plano.prompt → ai.service → validador-macros
+  os números      filtra restrições  monta o prompt   DeepSeek     confere as contas
 ```
 
-`PlanoService.gerar()` orquestra tudo; `OnboardingService` chama ele e imprime três blocos no console: o plano calculado, o plano gerado pela IA e a conferência dos macros. **Nada é persistido ainda** — o banco entra numa etapa posterior.
+Quem encadeia tudo é `plano-ia.generator.ts`; quem o chama é `plan.service.gerar()`.
+
+`plan.service.gerar()` orquestra tudo e imprime três blocos no console: o plano calculado, a conferência dos macros e o plano enviado ao app. O plano volta na resposta HTTP e **só é persistido quando o usuário aprova**, num segundo POST (`/api/cadastro`, `user.service`).
 
 ### Catálogos (`src/data/`)
 
 - `alimentos.ts` — 591 itens da TACO (NEPA/UNICAMP), macros por 100 g. **Arquivo gerado**: nunca editar à mão, rodar `npx tsx scripts/importar-taco.ts`. O script fica versionado para documentar a procedência dos dados.
-- `exercicios.ts` — 100 exercícios escritos à mão. `sessoes` usa os mesmos nomes que `CalculoService.SPLIT_POR_DIAS` gera; `articulacoes` casa com os chips de restrição física do app.
+- `exercicios.ts` — 100 exercícios escritos à mão. `sessoes` usa os mesmos nomes que `EngineService.SPLIT_POR_DIAS` gera; `articulacoes` casa com os chips de restrição física do app.
 
 Os `id` são estáveis e servirão de chave estrangeira quando as fichas forem persistidas.
 
-### `CatalogoService` — a restrição é aplicada por código, não por instrução
+### `catalogo.filter.ts` — a restrição é aplicada por código, não por instrução
 
 Filtra os catálogos **antes** de montar o prompt. O modelo não recebe leite para escolher, em vez de receber e ser instruído a não escolher — ele não pode violar uma restrição sobre um alimento que nunca viu.
 
 Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso negativo não**. Remover um alimento seguro custa variedade; manter um proibido pode machucar alguém. A exceção `VEGETAIS_COM_NOME_DE_LATICINIO` existe porque "Couve, manteiga" é hortaliça e "Soja, queijo (tofu)" é vegano — sem ela, o filtro de lactose comeria a couve.
 
-### `PromptService` — as três técnicas da fundamentação teórica (4.5.2)
+### `plano.prompt.ts` — as três técnicas da fundamentação teórica (4.5.2)
 
 1. **System prompt**: contrato de papel — o modelo é redator, proibido de recalcular, arredondar ou "corrigir" qualquer valor recebido, e de citar item fora das listas.
-2. **Context injection**: valores do `CalculoService` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`).
+2. **Context injection**: valores do `engine.service` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`).
 3. **Few-shot**: exemplo do JSON de saída. A palavra "json" e o exemplo são **requisito do JSON mode da DeepSeek**, não escolha estética.
 
 O system prompt cita a literatura que embasa cada limite (Pelland 2024, Schoenfeld 2016, ISSN/Jäger 2017, Stokes 2018, Kerksick 2017, Mifflin 1990). Isso não é enfeite acadêmico: explicar *por que* o número é aquele reduz a tentativa do modelo de "melhorar" o valor recebido — a alucinação de fidelidade de Zhang et al. (2024).
 
 Há limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
 
-### `PlanoService` — o número final nunca é aceito na palavra do modelo
+### `plano-ia.generator.ts` — o número final nunca é aceito na palavra do modelo
 
 Duas validações depois da resposta:
 1. **IDs**: todo `alimentoId`/`exercicioId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
-2. **Macros**: recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância.
+2. **Macros**: recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta mora em `generators/validador-macros.ts` e é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
 
 Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa só mede.
 
-### `LlmService` e a configuração
+### `ai.service.ts` e a configuração
 
 `gerarJson(system, user)` usa `response_format: json_object` e temperatura baixa (a fundamentação 4.2.3 trata a estocasticidade como problema de reprodutibilidade).
 
 **`max_tokens: 32000` não é exagero.** O `deepseek-v4-pro` é modelo de raciocínio e os `reasoning_tokens` contam dentro desse limite — montar um plano gasta ~8k tokens só de raciocínio. Com teto baixo o raciocínio esgota a cota e a resposta volta **vazia**, não truncada. Por isso o erro de resposta vazia carrega `finish_reason` e `usage`: sem eles não dá para distinguir essa causa de uma falha do modelo.
 
-Configuração em `src/config/deepseek.ts` (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`). Sem a chave o servidor sobe normal e só esta rota falha com 500.
+Configuração em `src/config/deepseek.ts` (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `SIMULAR_IA`). Sem a chave o servidor sobe normal e só esta rota falha com 500.
 
-Nos testes o `LlmService` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
+**`SIMULAR_IA` decide quem monta o plano** e vem **ligada** por padrão: com ela, `plano-simulado.generator` devolve o fixture de `src/data/plano-simulado.ts` em vez de chamar a DeepSeek. O caminho da IA continua inteiro e volta com `SIMULAR_IA=false` — está desligado por causa da latência (~3 min) e das falhas por raciocínio descontrolado, não por estar quebrado. A troca é feita na composição da rota (`plan.routes.ts`), atrás da interface `GeradorDePlano`; o `plan.service` não sabe qual dos dois recebeu.
+
+Nos testes o `ai.service` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
 
 ### Latência
 
@@ -316,14 +402,23 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 
 ## Endpoints
 
-| Método | Rota | O que faz |
-|---|---|---|
-| `POST` | `/api/onboarding` | Recebe `{ conta, perfil }`, calcula o plano determinístico, gera treino e dieta com a IA e **imprime no console** o plano calculado, o plano gerado e a conferência dos macros. Responde `{ recebido: true }` — o plano ainda não vai na resposta nem é persistido. **400** se o `perfil` faltar ou for inválido; **500** se a IA falhar. Leva ~2 min. |
+| Método | Rota | Corpo / Resposta | Erros |
+|---|---|---|---|
+| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano }` com metas, treino e dieta prontos para a tela. Nada é persistido. | **400** perfil ausente ou inválido; **500** se a IA falhar |
+| `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ usuarioId }`. Grava usuário, peso, restrições e as duas fichas numa transação. | **400** sem perfil ou sem plano; **409** e-mail já cadastrado |
+| `POST` | `/api/login` | `{ email, senha }` → **200** `{ usuarioId, nome, sobrenome, email }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
+| `GET` | `/api/plano/:usuarioId` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário inexistente ou sem plano ativo |
+| `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve tempo, tokens e validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
 
-## Próximos passos (fora do escopo desta etapa)
+O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` leva ~3 min — ver "Latência".
 
-- **Latência**: a rota leva ~2 min e o mobile tem timeout de 10s. Enquanto não houver geração em background, o app não consegue consumir esta rota.
-- Retry automático quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
-- Persistência: schema Prisma (usuário, perfil, fichas de treino/dieta) usando os `id` dos catálogos como FK.
-- Retorno do plano na resposta HTTP (hoje só vai para o console) e exibição no app.
-- Auth real (bcrypt + JWT) e validação campo a campo do payload.
+O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir um id lê o plano alheio. Sai quando a autenticação real entrar.
+
+## Próximos passos
+
+- **Auth real**: JWT em `auth.service` (o `jsonwebtoken` já está instalado) e o `usuarioId` saindo da URL do plano.
+- **Validação campo a campo do payload** — hoje só o perfil é validado, dentro do `engine.service`.
+- **Latência**: a rota da IA leva ~3 min e o mobile tem timeout de 210s. É o motivo de `SIMULAR_IA` existir. Resolver de verdade exige geração em background com o app consultando o resultado depois.
+- **Retry automático** quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
+- **Os três services de registro** (`refeicao`, `hidratacao`, `treino`): criar os models no `schema.prisma`, os repositories, os controllers e as rotas. Os services já existem como esqueleto, com a interface do repository declarada.
+- **Remover `benchmark/`** quando o caminho da IA estabilizar.
