@@ -1,5 +1,5 @@
-import NaoEncontradoError from "../errors/NaoEncontradoError";
-import ValidationError from "../errors/ValidationError";
+import NaoEncontradoError from "../errors/nao-encontrado.error";
+import ValidationError from "../errors/validation.error";
 import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PlanoMapper from "../mappers/plano.mapper";
 import PlanRepository from "../repositories/plan.repository";

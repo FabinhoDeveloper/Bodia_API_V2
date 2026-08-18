@@ -1,4 +1,4 @@
-import ValidationError from "../../src/errors/ValidationError";
+import ValidationError from "../../src/errors/validation.error";
 import CatalogoFilter from "../../src/prompts/catalogo.filter";
 
 describe("CatalogoFilter", () => {

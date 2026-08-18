@@ -1,6 +1,6 @@
 import { ALIMENTOS } from "../../src/data/alimentos";
 import { EXERCICIOS } from "../../src/data/exercicios";
-import { PLANO_SIMULADO } from "../../src/data/planoSimulado";
+import { PLANO_SIMULADO } from "../../src/data/plano-simulado";
 import EngineService from "../../src/services/engine.service";
 import PlanoMapper from "../../src/mappers/plano.mapper";
 import PlanoSimuladoGenerator from "../../src/generators/plano-simulado.generator";

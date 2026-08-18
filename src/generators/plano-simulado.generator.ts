@@ -1,12 +1,12 @@
 import { ALIMENTOS } from "../data/alimentos";
-import { PLANO_SIMULADO } from "../data/planoSimulado";
+import { PLANO_SIMULADO } from "../data/plano-simulado";
 import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
 import { PlanoValidado } from "../types/plano.types";
 import ValidadorMacros from "./validador-macros";
 
 /**
  * Substitui o LLM enquanto o fluxo da IA está desativado (flag SIMULAR_IA).
- * Devolve o fixture de src/data/planoSimulado.ts com a MESMA assinatura e o
+ * Devolve o fixture de src/data/plano-simulado.ts com a MESMA assinatura e o
  * mesmo tipo de retorno do PlanoIaGenerator, então quem chama não sabe a
  * diferença.
  *

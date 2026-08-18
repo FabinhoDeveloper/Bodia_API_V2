@@ -1,5 +1,5 @@
-import NaoEncontradoError from "../../src/errors/NaoEncontradoError";
-import ValidationError from "../../src/errors/ValidationError";
+import NaoEncontradoError from "../../src/errors/nao-encontrado.error";
+import ValidationError from "../../src/errors/validation.error";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
 import MeuPlanoMapper from "../../src/mappers/meu-plano.mapper";
 import PlanoMapper from "../../src/mappers/plano.mapper";

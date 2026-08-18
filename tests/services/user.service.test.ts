@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 
-import ConflitoError from "../../src/errors/ConflitoError";
-import ValidationError from "../../src/errors/ValidationError";
+import ConflitoError from "../../src/errors/conflito.error";
+import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
 import UserService from "../../src/services/user.service";
 import EngineService from "../../src/services/engine.service";

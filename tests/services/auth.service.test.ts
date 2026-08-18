@@ -1,4 +1,4 @@
-import AutenticacaoError from "../../src/errors/AutenticacaoError";
+import AutenticacaoError from "../../src/errors/autenticacao.error";
 import UserRepository from "../../src/repositories/user.repository";
 import AuthService from "../../src/services/auth.service";
 

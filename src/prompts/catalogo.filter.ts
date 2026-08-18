@@ -1,6 +1,6 @@
 import { ALIMENTOS, Alimento } from "../data/alimentos";
 import { EXERCICIOS, Exercicio, Sessao } from "../data/exercicios";
-import ValidationError from "../errors/ValidationError";
+import ValidationError from "../errors/validation.error";
 
 interface RegraRestricao {
     categorias: string[];

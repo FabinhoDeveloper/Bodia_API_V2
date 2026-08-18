@@ -1,5 +1,5 @@
-import ConflitoError from "../errors/ConflitoError";
-import ValidationError from "../errors/ValidationError";
+import ConflitoError from "../errors/conflito.error";
+import ValidationError from "../errors/validation.error";
 import UserRepository from "../repositories/user.repository";
 import { CadastroRequest } from "../types/plano.types";
 import AuthService from "./auth.service";

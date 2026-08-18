@@ -1,9 +1,9 @@
 import { NextFunction, Request, Response } from "express";
 
-import AutenticacaoError from "../errors/AutenticacaoError";
-import ConflitoError from "../errors/ConflitoError";
-import NaoEncontradoError from "../errors/NaoEncontradoError";
-import ValidationError from "../errors/ValidationError";
+import AutenticacaoError from "../errors/autenticacao.error";
+import ConflitoError from "../errors/conflito.error";
+import NaoEncontradoError from "../errors/nao-encontrado.error";
+import ValidationError from "../errors/validation.error";
 
 export default function errorHandler(err: Error, req: Request, res: Response, next: NextFunction) {
     if (err instanceof ValidationError) {

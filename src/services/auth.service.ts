@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
 
-import AutenticacaoError from "../errors/AutenticacaoError";
+import AutenticacaoError from "../errors/autenticacao.error";
 import UserRepository from "../repositories/user.repository";
 import { LoginInput, UsuarioAutenticado } from "../types/auth.types";
 
