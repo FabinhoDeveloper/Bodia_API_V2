@@ -1,16 +1,9 @@
 import ConflitoError from "../errors/ConflitoError";
 import ValidationError from "../errors/ValidationError";
 import CadastroRepository from "../repositories/CadastroRepository";
+import { CadastroRequest } from "../types/plano.types";
 import CalculoService from "./CalculoService";
-import { ContaInput, PerfilOnboardingInput } from "./OnboardingService";
-import { PlanoDTO } from "./PlanoMapper";
 import SenhaService from "./SenhaService";
-
-export interface CadastroInput {
-    conta: ContaInput;
-    perfil: PerfilOnboardingInput | null;
-    plano: PlanoDTO | null;
-}
 
 /**
  * Grava o cadastro quando o usuário aceita o plano na tela de revisão.
@@ -42,7 +35,7 @@ export default class CadastroService {
         this.senhaService = senhaService;
     }
 
-    async cadastrar(entrada: CadastroInput): Promise<{ usuarioId: string }> {
+    async cadastrar(entrada: CadastroRequest): Promise<{ usuarioId: string }> {
         const { conta, perfil, plano } = entrada;
 
         if (!perfil) {

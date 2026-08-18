@@ -1,10 +1,10 @@
 import ConflitoError from "../../src/errors/ConflitoError";
 import ValidationError from "../../src/errors/ValidationError";
 import CadastroRepository from "../../src/repositories/CadastroRepository";
-import CadastroService, { CadastroInput } from "../../src/services/CadastroService";
+import CadastroService from "../../src/services/CadastroService";
 import CalculoService from "../../src/services/CalculoService";
-import { PlanoDTO } from "../../src/services/PlanoMapper";
 import SenhaService from "../../src/services/SenhaService";
+import { CadastroRequest, PlanoDTO } from "../../src/types/plano.types";
 
 function planoDTO(overrides: Partial<PlanoDTO> = {}): PlanoDTO {
     return {
@@ -44,7 +44,7 @@ function planoDTO(overrides: Partial<PlanoDTO> = {}): PlanoDTO {
     };
 }
 
-function cadastroBase(overrides: Partial<CadastroInput> = {}): CadastroInput {
+function cadastroBase(overrides: Partial<CadastroRequest> = {}): CadastroRequest {
     return {
         conta: { nome: "Ana", sobrenome: "Silva", email: "ana@teste.com", senha: "12345678" },
         perfil: {
@@ -141,7 +141,7 @@ describe("CadastroService", () => {
         const { service, repository } = montar();
 
         await expect(
-            service.cadastrar(cadastroBase(override as Partial<CadastroInput>)),
+            service.cadastrar(cadastroBase(override as Partial<CadastroRequest>)),
         ).rejects.toThrow(ValidationError);
 
         expect(repository.criar).not.toHaveBeenCalled();

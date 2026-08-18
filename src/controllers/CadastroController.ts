@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 
-import CadastroService, { CadastroInput } from "../services/CadastroService";
+import CadastroService from "../services/CadastroService";
+import { CadastroRequest } from "../types/plano.types";
 
 /**
  * Ponte HTTP da confirmação do cadastro. Sem regra de negócio — e com
@@ -15,7 +16,7 @@ export default class CadastroController {
 
     cadastrar = (req: Request, res: Response, next: NextFunction) => {
         this.cadastroService
-            .cadastrar(req.body as CadastroInput)
+            .cadastrar(req.body as CadastroRequest)
             .then((resultado) => res.status(201).json(resultado))
             .catch(next);
     };

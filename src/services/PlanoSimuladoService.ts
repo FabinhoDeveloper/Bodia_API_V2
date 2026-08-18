@@ -1,7 +1,7 @@
 import { ALIMENTOS } from "../data/alimentos";
 import { PLANO_SIMULADO } from "../data/planoSimulado";
-import { ResultadoCalculo } from "./CalculoService";
-import { PerfilParaPlano, PlanoValidado, Validacao } from "./PlanoService";
+import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
+import { PlanoValidado, Validacao } from "../types/plano.types";
 
 /**
  * Substitui o LLM enquanto o fluxo da IA está desativado (flag SIMULAR_IA).

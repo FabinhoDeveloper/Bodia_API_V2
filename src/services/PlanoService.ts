@@ -1,88 +1,16 @@
 import { Alimento } from "../data/alimentos";
 import { Exercicio } from "../data/exercicios";
-import { ResultadoCalculo } from "./CalculoService";
+import { ResultadoBenchmarkGeracao } from "../types/benchmark.types";
+import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
+import {
+    DesvioMacro,
+    PlanoGerado,
+    PlanoValidado,
+    Validacao,
+} from "../types/plano.types";
 import CatalogoService from "./CatalogoService";
 import LlmService from "./LlmService";
 import PromptService from "./PromptService";
-
-export interface ItemRefeicao {
-    alimentoId: number;
-    nome: string;
-    gramas: number;
-}
-
-export interface Refeicao {
-    nome: string;
-    itens: ItemRefeicao[];
-}
-
-export interface ExercicioPrescrito {
-    exercicioId: number;
-    nome: string;
-    series: number;
-    repeticoes: string;
-}
-
-export interface SessaoTreino {
-    nome: string;
-    exercicios: ExercicioPrescrito[];
-}
-
-export interface PlanoGerado {
-    dieta: { refeicoes: Refeicao[] };
-    treino: { sessoes: SessaoTreino[] };
-    observacoes?: string;
-}
-
-export interface DesvioMacro {
-    meta: number;
-    obtido: number;
-    desvioPercentual: number;
-}
-
-export interface Validacao {
-    calorias: DesvioMacro;
-    proteina: DesvioMacro;
-    carboidrato: DesvioMacro;
-    gordura: DesvioMacro;
-    dentroDoLimite: boolean;
-}
-
-export interface PlanoValidado {
-    plano: PlanoGerado;
-    validacao: Validacao;
-}
-
-export interface PerfilParaPlano {
-    restricoesAlimentares: string[];
-    restricoesFisicas: string[];
-}
-
-/**
- * Retorno de gerarComMetricas — usado só pelo endpoint de benchmark
- * (src/services/BenchmarkGeracaoService.ts). `sucesso: false` significa que a
- * chamada à IA em si falhou (erro de rede/timeout/API); um plano que voltou
- * mas não passou no parse ou na validação ainda é `sucesso: true` — a
- * chamada funcionou, o problema é o conteúdo, e é exatamente isso que o
- * benchmark quer conseguir distinguir.
- */
-export interface ResultadoBenchmarkGeracao {
-    sucesso: boolean;
-    prepMs: number;
-    llmMs: number;
-    caracteresPrompt: number;
-    modeloRespondido: string | null;
-    respostaId: string | null;
-    finishReason: string | null;
-    usage: Record<string, unknown> | undefined;
-    respostaCaracteres: number | null;
-    respostaBytes: number | null;
-    jsonValido: boolean;
-    validacaoOk: boolean | null;
-    validacao: Validacao | null;
-    plano: PlanoGerado | null;
-    erro: { tipo: string; mensagem: string } | null;
-}
 
 /**
  * Orquestra a geração do plano pela IA (chamado por OnboardingService, depois

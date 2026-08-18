@@ -1,4 +1,4 @@
-import { PlanoGerado } from "../services/PlanoService";
+import { PlanoGerado } from "../types/plano.types";
 
 /**
  * Plano fixo, no MESMO formato que o LLM devolve, usado enquanto o fluxo da IA

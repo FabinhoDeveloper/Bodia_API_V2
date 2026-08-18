@@ -1,6 +1,7 @@
+import { PerfilOnboardingInput } from "../types/perfil.types";
+import { PlanoGerado, Validacao } from "../types/plano.types";
 import CalculoService from "./CalculoService";
-import { PerfilOnboardingInput } from "./OnboardingService";
-import PlanoService, { PlanoGerado, Validacao } from "./PlanoService";
+import PlanoService from "./PlanoService";
 
 export interface TokensBenchmark {
     prompt: number | null;

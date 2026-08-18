@@ -1,33 +1,7 @@
 import ValidationError from "../errors/ValidationError";
-import CalculoService, { PerfilInput, ResultadoCalculo } from "./CalculoService";
-import PlanoMapper, { PlanoDTO } from "./PlanoMapper";
-import { PerfilParaPlano, PlanoValidado } from "./PlanoService";
-
-export interface ContaInput {
-    nome: string;
-    sobrenome: string;
-    email: string;
-    senha: string;
-}
-
-export interface PerfilOnboardingInput extends PerfilInput {
-    restricoesAlimentares: string[];
-    restricoesFisicas: string[];
-}
-
-export interface CadastroInput {
-    conta: ContaInput;
-    perfil: PerfilOnboardingInput | null;
-}
-
-/**
- * Qualquer gerador de plano serve aqui — o PlanoService (que chama a IA) ou o
- * PlanoSimuladoService (fixture). Qual dos dois entra é decidido na rota, pela
- * flag SIMULAR_IA.
- */
-export interface GeradorDePlano {
-    gerar(perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado>;
-}
+import { GeradorDePlano, OnboardingRequest, PlanoDTO } from "../types/plano.types";
+import CalculoService from "./CalculoService";
+import PlanoMapper from "./PlanoMapper";
 
 /**
  * Orquestra o cadastro que chega do app (POST /api/onboarding, via
@@ -53,7 +27,7 @@ export default class OnboardingService {
         this.planoMapper = planoMapper;
     }
 
-    async receberCadastro(cadastro: CadastroInput): Promise<{ plano: PlanoDTO }> {
+    async receberCadastro(cadastro: OnboardingRequest): Promise<{ plano: PlanoDTO }> {
         if (!cadastro.perfil) {
             throw new ValidationError("perfil é obrigatório para gerar o plano");
         }

@@ -1,8 +1,7 @@
 import { NivelAtividade, NivelExperiencia, Objetivo, PrismaClient, Sexo } from "@prisma/client";
 
-import { ResultadoCalculo } from "../services/CalculoService";
-import { ContaInput, PerfilOnboardingInput } from "../services/OnboardingService";
-import { PlanoDTO } from "../services/PlanoMapper";
+import { ContaInput, PerfilOnboardingInput, ResultadoCalculo } from "../types/perfil.types";
+import { PlanoDTO } from "../types/plano.types";
 
 // O app manda minúsculo ("sedentario", "perder") e o banco usa enum maiúsculo.
 // A tradução mora aqui, num lugar só, em vez de espalhada pelos services.

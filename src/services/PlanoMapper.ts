@@ -1,56 +1,12 @@
 import { ALIMENTOS } from "../data/alimentos";
 import { EXERCICIOS } from "../data/exercicios";
-import { ResultadoCalculo } from "./CalculoService";
-import { PlanoGerado } from "./PlanoService";
-
-export interface ItemRefeicaoDTO {
-    alimentoId: number;
-    nome: string;
-    gramas: number;
-    kcal: number;
-}
-
-export interface RefeicaoDTO {
-    nome: string;
-    horario: string;
-    kcal: number;
-    itens: ItemRefeicaoDTO[];
-}
-
-export interface ExercicioDTO {
-    exercicioId: number;
-    nome: string;
-    grupoMuscular: string;
-    series: number;
-    repeticoes: string;
-    descansoSegundos: number;
-}
-
-export interface SessaoTreinoDTO {
-    nome: string;
-    dia: string;
-    gruposMusculares: string;
-    exercicios: ExercicioDTO[];
-}
-
-export interface PlanoDTO {
-    metas: {
-        calorias: number;
-        proteinaG: number;
-        carboidratoG: number;
-        gorduraG: number;
-        aguaMl: number;
-    };
-    treino: {
-        split: string;
-        diasPorSemana: number;
-        sessoes: SessaoTreinoDTO[];
-    };
-    dieta: {
-        refeicoes: RefeicaoDTO[];
-    };
-    observacoes?: string;
-}
+import { ResultadoCalculo } from "../types/perfil.types";
+import {
+    PlanoDTO,
+    PlanoGerado,
+    RefeicaoDTO,
+    SessaoTreinoDTO,
+} from "../types/plano.types";
 
 // Nem o LLM nem o CalculoService produzem dia da semana ou horário — são
 // apresentação. Ficam aqui, num lugar só, em vez de espalhados pelo app.

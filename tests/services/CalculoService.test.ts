@@ -1,9 +1,10 @@
-import CalculoService, {
+import CalculoService from "../../src/services/CalculoService";
+import {
     NivelAtividade,
     NivelExperiencia,
     Objetivo,
     PerfilInput,
-} from "../../src/services/CalculoService";
+} from "../../src/types/perfil.types";
 
 function dataNascimentoParaIdade(idade: number): string {
     const hoje = new Date();

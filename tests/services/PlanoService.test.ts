@@ -1,8 +1,9 @@
-import CalculoService, { PerfilInput } from "../../src/services/CalculoService";
+import CalculoService from "../../src/services/CalculoService";
 import CatalogoService from "../../src/services/CatalogoService";
 import LlmService from "../../src/services/LlmService";
-import PlanoService, { PerfilParaPlano } from "../../src/services/PlanoService";
+import PlanoService from "../../src/services/PlanoService";
 import PromptService from "../../src/services/PromptService";
+import { PerfilInput, PerfilParaPlano } from "../../src/types/perfil.types";
 
 const PERFIL: PerfilInput = {
     sexo: "F",

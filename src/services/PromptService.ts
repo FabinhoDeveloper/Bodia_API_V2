@@ -1,6 +1,6 @@
 import { Alimento } from "../data/alimentos";
 import { Exercicio } from "../data/exercicios";
-import { ResultadoCalculo } from "./CalculoService";
+import { ResultadoCalculo } from "../types/perfil.types";
 
 export interface ContextoPrompt {
     resultado: ResultadoCalculo;

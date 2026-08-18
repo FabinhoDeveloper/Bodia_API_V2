@@ -1,17 +1,6 @@
 import OpenAI from "openai";
 
-export interface RespostaLlmComMetricas {
-    conteudo: string;
-    finishReason: string | null;
-    modelo: string;
-    respostaId: string;
-    // Objeto `usage` exatamente como o provider devolveu, sem filtrar pelos
-    // campos que a lib da OpenAI documenta — a DeepSeek já expõe campos que
-    // não existem no tipo oficial (ex.: prompt_cache_hit_tokens), e quem
-    // consome isto (BenchmarkGeracaoService) precisa ver o bruto.
-    usage: Record<string, unknown> | undefined;
-    llmMs: number;
-}
+import { RespostaLlmComMetricas } from "../types/benchmark.types";
 
 /**
  * Cliente de IA do BodIA: fala com a DeepSeek (modelo configurado em

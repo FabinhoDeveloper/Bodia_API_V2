@@ -1,55 +1,6 @@
 import NaoEncontradoError from "../errors/NaoEncontradoError";
 import PlanoConsultaRepository from "../repositories/PlanoConsultaRepository";
-
-export interface MeuPlano {
-    usuario: {
-        nome: string;
-        sobrenome: string;
-        email: string;
-        alturaCm: number;
-        objetivo: string;
-        pesoAtualKg: number | null;
-    };
-    treino: {
-        split: string;
-        diasPorSemana: number;
-        sessoes: {
-            id: string;
-            nome: string;
-            diaSemana: string;
-            gruposMusculares: string;
-            exercicios: {
-                id: string;
-                exercicioId: number;
-                nome: string;
-                grupoMuscular: string;
-                series: number;
-                repeticoes: string;
-                descansoSegundos: number;
-                ultimoPesoKg: number | null;
-            }[];
-        }[];
-    };
-    dieta: {
-        metas: {
-            calorias: number;
-            proteinaG: number;
-            carboidratoG: number;
-            gorduraG: number;
-            aguaMl: number;
-        };
-        refeicoes: {
-            id: string;
-            nome: string;
-            horario: string;
-            kcal: number;
-            proteinaG: number;
-            carboidratoG: number;
-            gorduraG: number;
-            itens: { alimentoId: number; nome: string; gramas: number; kcal: number }[];
-        }[];
-    };
-}
+import { MeuPlano } from "../types/plano.types";
 
 /**
  * Monta o plano ativo no formato que as telas principais consomem — Home,

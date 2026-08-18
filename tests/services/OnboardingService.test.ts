@@ -1,10 +1,11 @@
 import ValidationError from "../../src/errors/ValidationError";
 import CalculoService from "../../src/services/CalculoService";
-import OnboardingService, { CadastroInput } from "../../src/services/OnboardingService";
+import OnboardingService from "../../src/services/OnboardingService";
 import PlanoMapper from "../../src/services/PlanoMapper";
-import PlanoService, { PlanoValidado } from "../../src/services/PlanoService";
+import PlanoService from "../../src/services/PlanoService";
+import { OnboardingRequest, PlanoValidado } from "../../src/types/plano.types";
 
-function cadastroBase(overrides: Partial<CadastroInput> = {}): CadastroInput {
+function cadastroBase(overrides: Partial<OnboardingRequest> = {}): OnboardingRequest {
     return {
         conta: { nome: "Ana", sobrenome: "Silva", email: "a@b.com", senha: "12345678" },
         perfil: {

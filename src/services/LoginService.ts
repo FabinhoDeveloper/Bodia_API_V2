@@ -1,18 +1,7 @@
 import AutenticacaoError from "../errors/AutenticacaoError";
 import CadastroRepository from "../repositories/CadastroRepository";
+import { LoginInput, UsuarioAutenticado } from "../types/auth.types";
 import SenhaService from "./SenhaService";
-
-export interface LoginInput {
-    email: string;
-    senha: string;
-}
-
-export interface UsuarioAutenticado {
-    usuarioId: string;
-    nome: string;
-    sobrenome: string;
-    email: string;
-}
 
 /**
  * Autentica pelo e-mail e senha. Enquanto não há JWT, o app guarda o

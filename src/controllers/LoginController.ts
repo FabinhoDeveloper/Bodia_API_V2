@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 
-import LoginService, { LoginInput } from "../services/LoginService";
+import LoginService from "../services/LoginService";
+import { LoginInput } from "../types/auth.types";
 
 /** Ponte HTTP do login. Sem regra de negócio. */
 export default class LoginController {

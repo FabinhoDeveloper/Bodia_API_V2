@@ -1,60 +1,13 @@
 import ValidationError from "../errors/ValidationError";
-
-export type Sexo = "M" | "F";
-export type NivelAtividade = "sedentario" | "leve" | "moderado" | "intenso" | "atleta";
-export type NivelExperiencia = "iniciante" | "intermediario" | "avancado";
-export type Objetivo = "perder" | "manter" | "ganhar";
-
-export interface PerfilInput {
-    sexo: Sexo;
-    dataNascimento: string;
-    peso: number;
-    altura: number;
-    percentualGordura: number | null;
-    nivelAtividade: NivelAtividade;
-    nivelExperiencia: NivelExperiencia;
-    objetivo: Objetivo;
-    diasPorSemana: number;
-    numeroRefeicoes?: number;
-}
-
-export interface ResultadoCalculo {
-    metabolismo: {
-        idade: number;
-        imc: number;
-        tmb: number;
-        fatorAtividade: number;
-        tdee: number;
-    };
-    meta: {
-        objetivo: Objetivo;
-        ajustePercentual: number;
-        caloriasAlvo: number;
-    };
-    macros: {
-        proteina: { g: number; kcal: number };
-        gordura: { g: number; kcal: number };
-        carboidrato: { g: number; kcal: number };
-    };
-    treino: {
-        diasPorSemana: number;
-        split: string;
-        sessoes: { nome: string; frequenciaSemanal: number }[];
-        seriesPorGrupoSemana: number;
-    };
-    dieta: {
-        numeroRefeicoes: number;
-        refeicoes: MetaRefeicao[];
-    };
-}
-
-export interface MetaRefeicao {
-    nome: string;
-    kcal: number;
-    proteina: number;
-    carboidrato: number;
-    gordura: number;
-}
+import {
+    MetaRefeicao,
+    NivelAtividade,
+    NivelExperiencia,
+    Objetivo,
+    PerfilInput,
+    ResultadoCalculo,
+    Sexo,
+} from "../types/perfil.types";
 
 interface Sessao {
     nome: string;
