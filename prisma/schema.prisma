@@ -11,9 +11,11 @@
 //   FichaTreino      → SessaoTreino[]  → ExercicioSessao[] → Exercicio
 //   FichaAlimentacao → Refeicao[]      → ItemRefeicao[]    → Alimento
 //
-// Ainda não modelado: o que foi EXECUTADO (treino feito, refeição consumida,
-// hidratação). Prescrição e execução são coisas distintas e virão em tabelas
-// próprias.
+// Execução (o que o usuário de fato fez):
+//   RegistroHidratacao — água ingerida
+//
+// Prescrição e execução são coisas distintas e vivem em tabelas próprias.
+// Ainda não modelado: treino feito e refeição consumida.
 //
 // Os enums espelham os tipos de src/services/CalculoService.ts.
 
@@ -106,6 +108,7 @@ model Usuario {
   restricoes        Restricao[]
   fichasTreino      FichaTreino[]
   fichasAlimentacao FichaAlimentacao[]
+  hidratacoes       RegistroHidratacao[]
 }
 
 /// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo
@@ -283,6 +286,40 @@ model ItemRefeicao {
   alimento Alimento @relation(fields: [alimentoId], references: [id])
 
   @@index([refeicaoId])
+}
+
+// ---------------------------------------------------------------------------
+// Execução: o que o usuário registrou ter feito
+//
+// Distinto da prescrição acima: a ficha diz o que fazer, estas tabelas dizem o
+// que foi feito. Nenhuma das duas deriva da outra.
+// ---------------------------------------------------------------------------
+
+/// Cada gole registrado — uma linha por toque no app, não um total por dia.
+///
+/// Guardar o evento (e não um contador acumulado) é o que permite desfazer um
+/// registro errado apagando uma linha, em vez de subtrair às cegas de um total
+/// que ninguém sabe como foi formado. De quebra preserva a que horas a pessoa
+/// bebeu, que um total do dia jogaria fora.
+///
+/// NÃO existe coluna `dia`: ela seria derivada de registradoEm mais o fuso, e
+/// duas cópias do mesmo fato divergem — a mesma razão pela qual o peso atual
+/// não é campo em Usuario. O recorte do dia é feito na leitura, por
+/// config/fuso.ts, porque o servidor roda em UTC e o usuário não: uma ceia às
+/// 22h em Brasília é 01h UTC do dia seguinte, e cortar por dia UTC gravaria a
+/// água no dia errado.
+model RegistroHidratacao {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  /// Mililitros. Inteiro — não existe meio mililitro de água registrado a dedo.
+  volumeMl     Int
+  registradoEm DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  /// Serve às duas consultas que existem: o total do dia e o histórico por
+  /// período.
+  @@index([usuarioId, registradoEm])
 }
 
 // ---------------------------------------------------------------------------

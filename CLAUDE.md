@@ -1,6 +1,6 @@
 # BodIA — Backend
 
-API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro e devolve o plano ao app — **ainda não há JWT nem validação campo a campo do payload**.
+API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro, devolve o plano ao app e registra a hidratação do dia — **ainda não há JWT nem validação campo a campo do payload**.
 
 Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
 
@@ -37,7 +37,7 @@ Existem porque tipo declarado junto da classe que o produz força dependência p
 | `perfil.types.ts` | `PerfilInput`, `PerfilOnboardingInput`, `ContaInput`, `ResultadoCalculo` |
 | `plano.types.ts` | `PlanoGerado`, `PlanoDTO`, `MeuPlano`, `Validacao`, `GeradorDePlano`, os payloads das rotas |
 | `auth.types.ts` | `LoginInput`, `UsuarioAutenticado` |
-| `registro.types.ts` | registros de refeição/hidratação/treino (ainda sem model no Prisma) |
+| `registro.types.ts` | registros de refeição/hidratação/treino; refeição e treino ainda sem model no Prisma |
 | `benchmark.types.ts` | só do endpoint temporário — sai junto com ele |
 
 ### Repository (`src/repositories/`)
@@ -73,10 +73,12 @@ Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que pre
 | `plan.service.ts` | gerar, consultar e (via user) persistir o plano | pronto |
 | `ai.service.ts` | comunicação com a DeepSeek: envia prompt, devolve resposta | pronto |
 | `refeicao.service.ts` | registro/histórico de refeições | **esqueleto** |
-| `hidratacao.service.ts` | registro/histórico de hidratação | **esqueleto** |
+| `hidratacao.service.ts` | registro/histórico de hidratação | pronto |
 | `treino.service.ts` | registro de treino e exercícios | **esqueleto** |
 
-Os três esqueletos lançam `"não implementado"` e **não têm rota**: dependem de model que ainda não existe no `schema.prisma`. O que falta em cada um está no cabeçalho do arquivo.
+Os **dois** esqueletos restantes (`refeicao`, `treino`) lançam `"não implementado"` e **não têm rota**: dependem de model que ainda não existe no `schema.prisma`. O que falta em cada um está no cabeçalho do arquivo.
+
+`hidratacao.service` foi o primeiro a sair do esqueleto — o caminho que ele percorreu (model → migration → repository → controller → rota) é o roteiro dos outros dois.
 
 ### O que entra em `services/`
 
@@ -189,6 +191,7 @@ backend/
       prisma.ts               # PrismaClient singleton
       deepseek.ts             # cliente da IA (factory) + modelo + flag SIMULAR_IA
       auth.ts                 # custo do bcrypt
+      fuso.ts                 # recorte do dia no fuso do usuário (America/Sao_Paulo)
     types/                    # interfaces compartilhadas — nenhuma classe
       perfil.types.ts  plano.types.ts  auth.types.ts
       registro.types.ts  benchmark.types.ts
@@ -199,7 +202,7 @@ backend/
       plan.service.ts         # gerar e consultar o plano
       ai.service.ts           # adaptador DeepSeek
       refeicao.service.ts     # esqueleto — falta model
-      hidratacao.service.ts   # esqueleto — falta model
+      hidratacao.service.ts   # registro de água do dia
       treino.service.ts       # esqueleto — falta model
     generators/               # quem monta o plano (interface GeradorDePlano)
       plano-ia.generator.ts   plano-simulado.generator.ts
@@ -213,10 +216,12 @@ backend/
       catalogo.filter.ts      # aplica as restrições ANTES do prompt
     repositories/
       user.repository.ts      plan.repository.ts
+      hidratacao.repository.ts
     controllers/
       auth.controller.ts      user.controller.ts      plan.controller.ts
+      hidratacao.controller.ts
     routes/
-      auth.routes.ts  user.routes.ts  plan.routes.ts
+      auth.routes.ts  user.routes.ts  plan.routes.ts  hidratacao.routes.ts
       index.ts                # agrega os routers, montado em /api
     benchmark/                # endpoint TEMPORÁRIO, isolado
       benchmark.service.ts    benchmark.controller.ts   benchmark.routes.ts
@@ -423,11 +428,26 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 | `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ usuarioId }`. Grava usuário, peso, restrições e as duas fichas numa transação. | **400** sem perfil ou sem plano; **409** e-mail já cadastrado |
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ usuarioId, nome, sobrenome, email }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
 | `GET` | `/api/plano/:usuarioId` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário inexistente ou sem plano ativo |
+| `POST` | `/api/hidratacao` | `{ usuarioId, volumeMl }` → **201** `{ dia, totalMl, metaMl, registros }`. Registra água e devolve o dia já somado. | **400** volumeMl fora de 1–5000 ou não inteiro; **404** usuário sem plano ativo |
+| `GET` | `/api/hidratacao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
+| `DELETE` | `/api/hidratacao/:usuarioId/:registroId` | Desfaz um registro → **200** mesmo formato | **404** registro inexistente **ou de outro usuário** |
 | `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve tempo, tokens e validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
 
 O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` leva ~3 min — ver "Latência".
 
 O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir um id lê o plano alheio. Sai quando a autenticação real entrar.
+
+Nas rotas de hidratação o mesmo buraco é **pior**, porque ali não se lê: se **escreve e se apaga** no histórico alheio. O `usuarioId` no path do `DELETE` não é decoração — é ele que o repository usa no `where` para impedir que um registroId sozinho apague linha de outra pessoa. Registro inexistente e registro alheio devolvem os dois **404**, nunca 403: um 403 confirmaria a existência do registro do outro.
+
+### Por que o dia é recortado no servidor (`config/fuso.ts`)
+
+`RegistroHidratacao` guarda só o instante (UTC). O dia a que ele pertence é calculado na leitura, com offset fixo de **America/Sao_Paulo (−3)**.
+
+Isso existe porque o servidor roda em UTC e o usuário não: uma ceia às 22h em Brasília é 01h UTC do **dia seguinte**, então cortar pela data UTC gravaria a água da noite no dia errado. O app **não envia data** — a regra é uma só, e fica no servidor.
+
+Não há coluna `dia` de propósito: ela seria derivada de `registradoEm` mais o fuso, e duas cópias do mesmo fato divergem (a mesma razão pela qual o peso atual não é campo em `Usuario`).
+
+Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando tem o dia recortado pelo relógio de São Paulo. Consertar exige guardar o fuso de cada usuário.
 
 ## Próximos passos
 
@@ -435,5 +455,7 @@ O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir 
 - **Validação campo a campo do payload** — hoje só o perfil é validado, dentro do `engine.service`.
 - **Latência**: a rota da IA leva ~3 min e o mobile tem timeout de 210s. É o motivo de `SIMULAR_IA` existir. Resolver de verdade exige geração em background com o app consultando o resultado depois.
 - **Retry automático** quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
-- **Os três services de registro** (`refeicao`, `hidratacao`, `treino`): criar os models no `schema.prisma`, os repositories, os controllers e as rotas. Os services já existem como esqueleto, com a interface do repository declarada.
+- **Os dois services de registro restantes** (`refeicao`, `treino`): criar os models no `schema.prisma`, os repositories, os controllers e as rotas, no mesmo caminho que `hidratacao` já percorreu. Ambos reusam `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
+- **Escrita sem autenticação**: as rotas de hidratação aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.
+- **`ultimoPesoKg` na tabela errada**: o campo vive em `ExercicioSessao`, que pertence à ficha. Gerar plano novo cria ficha nova com o campo nulo, e o usuário perde a carga de todos os exercícios. A carga é atributo do par (usuário, exercício do catálogo) — precisa mudar de lugar antes de o registro de treino entrar.
 - **Remover `benchmark/`** quando o caminho da IA estabilizar.

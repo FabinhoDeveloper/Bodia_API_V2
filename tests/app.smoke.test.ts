@@ -78,6 +78,9 @@ describe("app (smoke)", () => {
                 "POST /api/login",
                 "GET /api/plano/:usuarioId",
                 "GET /api/teste-geracao",
+                "POST /api/hidratacao",
+                "GET /api/hidratacao/:usuarioId",
+                "DELETE /api/hidratacao/:usuarioId/:registroId",
             ]),
         );
     });
@@ -163,6 +166,29 @@ describe("app (smoke)", () => {
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/plano/i);
+        });
+    });
+
+    describe("hidratação", () => {
+        // A validação do volume e a do formato do dia rodam ANTES de qualquer
+        // consulta ao Prisma, então estes casos não precisam de banco.
+        it.each([-5, 0, 250.5, 99999])(
+            "devolve 400 ao registrar volumeMl %p",
+            async (volumeMl) => {
+                const resposta = await request(app)
+                    .post("/api/hidratacao")
+                    .send({ usuarioId: "qualquer", volumeMl });
+
+                expect(resposta.status).toBe(400);
+                expect(resposta.body.message).toMatch(/volumeMl/i);
+            },
+        );
+
+        it("devolve 400 quando o dia da query não é AAAA-MM-DD", async () => {
+            const resposta = await request(app).get("/api/hidratacao/qualquer?dia=19/08/2026");
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/dia/i);
         });
     });
 });

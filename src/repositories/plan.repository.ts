@@ -12,6 +12,26 @@ export default class PlanRepository {
         this.prismaClient = prismaClient;
     }
 
+    /**
+     * Só a meta de água da ficha ativa — devolve null se o usuário não existe
+     * ou ainda não tem ficha.
+     *
+     * Existe separado de buscarPlanoAtivo porque a hidratação precisa de um
+     * inteiro, e buscarPlanoAtivo traria junto todas as refeições, todos os
+     * alimentos e toda a ficha de treino para chegar nele.
+     *
+     * Fica neste repository, e não no de hidratação, porque FichaAlimentacao é
+     * entidade daqui — cada repository acessa uma entidade só.
+     */
+    async buscarMetaAgua(usuarioId: string): Promise<number | null> {
+        const ficha = await this.prismaClient.fichaAlimentacao.findFirst({
+            where: { usuarioId, ativa: true },
+            select: { metaAguaMl: true },
+        });
+
+        return ficha?.metaAguaMl ?? null;
+    }
+
     buscarPlanoAtivo(usuarioId: string) {
         return this.prismaClient.usuario.findUnique({
             where: { id: usuarioId },
