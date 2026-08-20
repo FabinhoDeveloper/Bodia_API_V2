@@ -49,6 +49,17 @@ export interface PlanoGerado {
     observacoes?: string;
 }
 
+/**
+ * Saída da CHAMADA 1 da dieta: só a seleção, sem gramas.
+ *
+ * Existe como tipo próprio porque é um estado intermediário real — o plano
+ * ainda não é montável a partir dele. A chamada 2 recebe estes ids e devolve as
+ * quantidades; só então nasce um `Refeicao`.
+ */
+export interface SelecaoDieta {
+    refeicoes: { nome: string; alimentoIds: number[] }[];
+}
+
 // ---------------------------------------------------------------------------
 // Conferência dos macros — o número do gerador nunca é aceito na palavra dele
 // ---------------------------------------------------------------------------

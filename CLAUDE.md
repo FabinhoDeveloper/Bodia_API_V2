@@ -14,7 +14,7 @@ Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** —
 - **cors**, **dotenv** — infraestrutura básica de app
 - **Jest** (`ts-jest`) — testes
 - **supertest** — testes de rota (`tests/app.smoke.test.ts`)
-- **`openai` SDK** apontado para a **DeepSeek** (`deepseek-v4-pro`) — a API da DeepSeek é compatível com a interface Chat Completions da OpenAI, então o SDK oficial é reaproveitado só trocando a `baseURL`
+- **`openai` SDK** — hoje na **OpenAI** (`gpt-4o-mini`). O provider é configurável (`IA_BASE_URL`): DeepSeek e Gemini expõem endpoints compatíveis com Chat Completions, então o mesmo SDK serve os três
 
 ## Arquitetura em camadas
 
@@ -71,7 +71,7 @@ Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que pre
 | `auth.service.ts` | login e hash de senha | pronto (sem JWT) |
 | `user.service.ts` | cadastro; futuramente atualização, exclusão e perfil | cadastro pronto |
 | `plan.service.ts` | gerar, consultar e (via user) persistir o plano | pronto |
-| `ai.service.ts` | comunicação com a DeepSeek: envia prompt, devolve resposta | pronto |
+| `ai.service.ts` | comunicação com a IA: envia prompt, devolve resposta | pronto |
 | `refeicao.service.ts` | registro/histórico de refeições | pronto |
 | `hidratacao.service.ts` | registro/histórico de hidratação | pronto |
 | `treino.service.ts` | registro de treino e exercícios | **esqueleto** |
@@ -87,8 +87,8 @@ Só classe que é **ponto de entrada de um domínio**. O resto é colaborador e 
 | Pasta | O que é | Exemplos |
 |---|---|---|
 | `mappers/` | tradução entre formato interno e contrato da API | `plano.mapper.ts` (escrita), `meu-plano.mapper.ts` (leitura), `perfil.mapper.ts` (string → enum) |
-| `prompts/` | construção do prompt e o filtro que o alimenta | `plano.prompt.ts`, `catalogo.filter.ts` |
-| `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts` |
+| `prompts/` | construção dos prompts e o filtro que os alimenta | `dieta-selecao.prompt.ts`, `dieta-quantidades.prompt.ts`, `treino.prompt.ts`, `catalogo.filter.ts` |
+| `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts` (orquestra), `dieta-ia.generator.ts`, `treino-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts` |
 | `benchmark/` | endpoint temporário, service + controller + rota juntos | `benchmark.*.ts` |
 
 A regra prática: **se a classe não é chamada direto por um controller, provavelmente é colaborador.** Criar um service novo só porque uma classe ficou grande recria o problema que essa organização resolveu — services que não eram domínio nenhum.
@@ -159,7 +159,8 @@ Sempre importe o singleton do Prisma em vez de criar um `PrismaClient` novo.
 - **Tipo compartilhado vai para `src/types/`**, nunca exportado de um service. Tipo que só interessa ao próprio arquivo pode ficar nele.
 - Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/error-handler.ts`) captura. `ValidationError` → **400**, `AutenticacaoError` → **401**, `NaoEncontradoError` → **404**, `ConflitoError` → **409**; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
-- Clientes de serviços externos ficam em `src/config/<provider>.ts` e são injetados por construtor (`prisma.ts`, `deepseek.ts`). Quando o SDK valida credencial no construtor — caso do `openai` —, exportar uma **factory** (`getDeepseekClient()`) em vez do cliente pronto: assim a falta da chave não derruba o servidor no boot, só falha a rota que usa aquele serviço.
+- Clientes de serviços externos ficam em `src/config/<provider>.ts` e são injetados por construtor (`prisma.ts`). Quando o SDK valida credencial no construtor — caso do `openai` —, exportar uma **factory** (`getIaClient()`) em vez do cliente pronto: assim a falta da chave não derruba o servidor no boot, só falha a rota que usa aquele serviço.
+- **`config/ia.ts` é exceção deliberada a essa regra de nome.** O projeto trocou de provider três vezes (DeepSeek → Gemini → OpenAI) em pouco tempo, então o provider virou valor de **configuração** (`IA_BASE_URL`, `IA_MODEL`), não identidade do código — trocar de novo é editar o `.env`. Não renomear para `openai.ts`: isso desfaz a portabilidade.
 - **Express 4 não encaminha rejeição de Promise para o `errorHandler`.** Handler que chama Service assíncrono precisa propagar na mão — `.then(...).catch(next)` (ver `plan.controller.ts`). Sem isso a requisição fica pendurada até dar timeout em vez de virar 500.
 
 ## Testes (`tests/`)
@@ -189,7 +190,7 @@ backend/
   src/
     config/
       prisma.ts               # PrismaClient singleton
-      deepseek.ts             # cliente da IA (factory) + modelo + flag SIMULAR_IA
+      ia.ts                   # cliente da IA (factory) + modelo + flag SIMULAR_IA
       auth.ts                 # custo do bcrypt
       fuso.ts                 # recorte do dia no fuso do usuário (America/Sao_Paulo)
     types/                    # interfaces compartilhadas — nenhuma classe
@@ -200,20 +201,27 @@ backend/
       auth.service.ts         # login + hash de senha
       user.service.ts         # cadastro
       plan.service.ts         # gerar e consultar o plano
-      ai.service.ts           # adaptador DeepSeek
+      ai.service.ts           # adaptador do provider de IA
       refeicao.service.ts     # refeições marcadas como comidas
       hidratacao.service.ts   # registro de água do dia
       treino.service.ts       # esqueleto — falta model
     generators/               # quem monta o plano (interface GeradorDePlano)
-      plano-ia.generator.ts   plano-simulado.generator.ts
-      validador-macros.ts     # conferência de macros, usada pelos dois
+      plano-ia.generator.ts   # orquestra as 3 chamadas, dieta e treino em paralelo
+      dieta-ia.generator.ts   # chamadas 1 e 2 (seleção -> quantidades)
+      treino-ia.generator.ts  # chamada 3
+      plano-simulado.generator.ts
+      validador-macros.ts     # conferência de macros, usada por todos
     mappers/
       plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
       meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
       perfil.mapper.ts        # string do app -> enum do Prisma
     prompts/
-      plano.prompt.ts         # system + user do LLM
-      catalogo.filter.ts      # aplica as restrições ANTES do prompt
+      dieta-selecao.prompt.ts      # chamada 1: quais alimentos, sem gramas
+      dieta-quantidades.prompt.ts  # chamada 2: gramas dos já escolhidos
+      treino.prompt.ts             # chamada 3: o treino
+      padrao-refeicoes.ts          # como é cada refeição no Brasil (dado)
+      prompt.types.ts              # o par { system, user }
+      catalogo.filter.ts           # aplica as restrições ANTES do prompt
     repositories/
       user.repository.ts      plan.repository.ts
       hidratacao.repository.ts  refeicao.repository.ts
@@ -363,14 +371,34 @@ Os nomes precisam continuar batendo com `HORARIO_POR_REFEICAO` (`mappers/plano.m
 
 ## Geração do plano pela IA
 
-O fluxo completo de `POST /api/onboarding` é:
+O `POST /api/onboarding` faz **três chamadas** ao modelo, não uma:
 
 ```
-engine.service → catalogo.filter → plano.prompt → ai.service → validador-macros
-  os números      filtra restrições  monta o prompt   DeepSeek     confere as contas
+                      ┌─ dieta:seleção ──▶ dieta:quantidades ─┐
+engine.service ─▶ catalogo.filter ─┤                                       ├─▶ validador-macros
+  os números       filtra restrições└─ treino ──────────────────────────────┘     confere as contas
+                                        (em paralelo com a dieta)
 ```
 
-Quem encadeia tudo é `plano-ia.generator.ts`; quem o chama é `plan.service.gerar()`.
+Quem encadeia é `plano-ia.generator.ts`; quem o chama é `plan.service.gerar()`.
+
+### Por que três chamadas, e não uma
+
+A versão anterior pedia ao modelo, na mesma resposta, escolher alimentos, dosar gramas até fechar quatro macros e montar o treino. Levava 2–3 min, falhava com frequência e produzia café da manhã com filé de merluza. O comentário de `reasoning_effort` que existia no `ai.service` já dizia onde estava o problema: *"a dificuldade aritmética da tarefa (encaixar gramas de 591 alimentos até fechar 4 macros ao mesmo tempo)"*.
+
+Cada chamada agora faz uma coisa só:
+
+| Etapa | Faz | Prompt |
+|---|---|---|
+| `dieta:seleção` | escolhe **quais** alimentos entram em cada refeição, por id. Proibida de informar gramas. | ~17k caracteres (leva a TACO filtrada) |
+| `dieta:quantidades` | dosa em gramas **só os alimentos escolhidos** na etapa anterior | ~3,8k caracteres |
+| `treino` | monta o treino. Não conhece a dieta. | ~7,8k caracteres |
+
+**O ganho não é prompt menor no total** — a soma é parecida com a de antes, porque a seleção ainda carrega o catálogo inteiro. O ganho é que a etapa **difícil** encolheu: a aritmética que estourava o raciocínio agora acontece sobre 3 a 5 alimentos por refeição em vez de 591.
+
+Se a latência ainda incomodar, é a chamada 1 que precisa encolher — e o caminho é classificar a TACO por refeição e filtrar por código, como o `catalogo.filter` já faz com as restrições.
+
+**Dieta e treino rodam em `Promise.all`.** São independentes, e sem isso a divisão sairia mais lenta que a chamada única: o total seria a soma das três em vez de `max(dieta₁+dieta₂, treino)`.
 
 `plan.service.gerar()` orquestra tudo e imprime três blocos no console: o plano calculado, a conferência dos macros e o plano enviado ao app. O plano volta na resposta HTTP e **só é persistido quando o usuário aprova**, num segundo POST (`/api/cadastro`, `user.service`).
 
@@ -387,39 +415,64 @@ Filtra os catálogos **antes** de montar o prompt. O modelo não recebe leite pa
 
 Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso negativo não**. Remover um alimento seguro custa variedade; manter um proibido pode machucar alguém. A exceção `VEGETAIS_COM_NOME_DE_LATICINIO` existe porque "Couve, manteiga" é hortaliça e "Soja, queijo (tofu)" é vegano — sem ela, o filtro de lactose comeria a couve.
 
-### `plano.prompt.ts` — as três técnicas da fundamentação teórica (4.5.2)
+### Os prompts — as três técnicas da fundamentação teórica (4.5.2)
 
-1. **System prompt**: contrato de papel — o modelo é redator, proibido de recalcular, arredondar ou "corrigir" qualquer valor recebido, e de citar item fora das listas.
-2. **Context injection**: valores do `engine.service` + catálogos filtrados (formato compacto `id|nome|kcal|prot|carb|gord`). Inclui a meta completa (kcal + 3 macros) de **cada refeição**, com os nomes que o modelo deve usar — ver "Distribuição por refeição".
-3. **Few-shot**: exemplo do JSON de saída. A palavra "json" e o exemplo são **requisito do JSON mode da DeepSeek**, não escolha estética.
+Cada um dos três prompts aplica as mesmas técnicas, com o conteúdo que lhe diz respeito:
 
-O system prompt cita a literatura que embasa cada limite (Pelland 2024, Schoenfeld 2016, ISSN/Jäger 2017, Stokes 2018, Kerksick 2017, Mifflin 1990). Isso não é enfeite acadêmico: explicar *por que* o número é aquele reduz a tentativa do modelo de "melhorar" o valor recebido — a alucinação de fidelidade de Zhang et al. (2024).
+1. **System prompt**: contrato de papel. Na seleção, o modelo escolhe e **não calcula**; nas quantidades, dosa e não troca alimento; no treino, distribui séries e não recalcula volume.
+2. **Context injection**: valores do `engine.service` + o catálogo pertinente àquela etapa.
+3. **Few-shot**: exemplo do JSON de saída, com a palavra "json" — requisito do JSON mode.
 
-Há limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
+**As citações da literatura ficam no prompt a que pertencem**, não repetidas nas três: Pelland 2024 e Schoenfeld 2016 (volume) só no `treino.prompt`; ISSN/Jäger, Stokes, Kerksick e Mifflin (macros) só no `dieta-quantidades.prompt`. Elas existem para reduzir a tentativa do modelo de "melhorar" o número recebido — a alucinação de fidelidade de Zhang et al. (2024) —, e isso só faz sentido onde o número está. Há teste garantindo que não vazem entre prompts.
 
-### `plano-ia.generator.ts` — o número final nunca é aceito na palavra do modelo
+`treino.prompt.ts` tem limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
 
-Duas validações depois da resposta:
-1. **IDs**: todo `alimentoId`/`exercicioId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
-2. **Macros**: recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta mora em `generators/validador-macros.ts` e é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
+### `padrao-refeicoes.ts` — o padrão brasileiro é instrução, não filtro
+
+Descreve o que compõe cada refeição no Brasil (café: pão, ovo, fruta, café — nunca arroz, feijão ou peixe) e entra no system prompt da seleção, só com as refeições que aquele usuário faz.
+
+**Difere de propósito do `catalogo.filter`**, que remove o item do catálogo: uma restrição alimentar violada machuca alguém, um café da manhã estranho só é estranho. Se na prática o modelo continuar ignorando o padrão, o caminho é classificar a TACO por refeição e passar a filtrar — o `catalogo.filter` é o precedente pronto.
+
+As chaves precisam continuar batendo com `DISTRIBUICAO_REFEICOES` (`engine.service`) e `HORARIO_POR_REFEICAO` (`plano.mapper`).
+
+### O número final nunca é aceito na palavra do modelo
+
+A validação acontece em camadas, e cada uma é mais estreita que a anterior:
+
+1. **IDs na seleção**: todo `alimentoId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
+2. **IDs nas quantidades**: os ids precisam estar **na seleção da chamada 1**, não no catálogo inteiro. É uma conferência bem mais apertada, e saiu de graça com a divisão.
+3. **Nome do catálogo**: o `nome` gravado vem do catálogo, não do que a IA escreveu — o app nunca exibe um nome que não corresponde ao id.
+4. **Gramas**: precisam ser número finito e positivo.
+5. **IDs do treino**: mesma regra do catálogo filtrado.
+6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
 
 Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa só mede.
 
 ### `ai.service.ts` e a configuração
 
-`gerarJson(system, user)` usa `response_format: json_object` e temperatura baixa (a fundamentação 4.2.3 trata a estocasticidade como problema de reprodutibilidade).
+`gerarJson(system, user, etapa)` usa `response_format: json_object` e temperatura baixa (a fundamentação 4.2.3 trata a estocasticidade como problema de reprodutibilidade).
 
-**`max_tokens: 32000` não é exagero.** O `deepseek-v4-pro` é modelo de raciocínio e os `reasoning_tokens` contam dentro desse limite — montar um plano gasta ~8k tokens só de raciocínio. Com teto baixo o raciocínio esgota a cota e a resposta volta **vazia**, não truncada. Por isso o erro de resposta vazia carrega `finish_reason` e `usage`: sem eles não dá para distinguir essa causa de uma falha do modelo.
+O parâmetro **`etapa`** não é enfeite: com três chamadas, sem ele o console imprime blocos idênticos e não dá para saber qual etapa está lenta ou falhou. Os logs saem como `[ia:dieta:seleção]`, `[ia:dieta:quantidades]`, `[ia:treino]`, com tempo e tokens de cada uma.
 
-Configuração em `src/config/deepseek.ts` (`DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `SIMULAR_IA`). Sem a chave o servidor sobe normal e só esta rota falha com 500.
+`max_tokens: 8192` — o teto anterior era 32000 por causa dos `reasoning_tokens` da DeepSeek, que contavam dentro do limite. Cada chamada agora produz uma resposta pequena.
 
-**`SIMULAR_IA` decide quem monta o plano** e vem **ligada** por padrão: com ela, `plano-simulado.generator` devolve o fixture de `src/data/plano-simulado.ts` em vez de chamar a DeepSeek. O caminho da IA continua inteiro e volta com `SIMULAR_IA=false` — está desligado por causa da latência (~3 min) e das falhas por raciocínio descontrolado, não por estar quebrado. A troca é feita na composição da rota (`plan.routes.ts`), atrás da interface `GeradorDePlano`; o `plan.service` não sabe qual dos dois recebeu.
+Configuração em `src/config/ia.ts` (`IA_API_KEY`, `IA_MODEL`, `IA_BASE_URL`, `SIMULAR_IA`). Sem a chave o servidor sobe normal e só as rotas de IA falham — é o motivo de o cliente ser criado por **factory**, e não no boot.
 
-Nos testes o `ai.service` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede.
+**`IA_BASE_URL` vazio significa OpenAI** (o SDK usa o próprio padrão); preenchido, aponta a qualquer provider compatível com Chat Completions. No código o valor passa por `|| undefined`, e não cru: string vazia quebra a resolução do endpoint no SDK em vez de cair no padrão. Cuidado — é esta variável que decide para onde a chave é enviada.
+
+**O modelo padrão é de chat, não de raciocínio**, e isso não é só preço: o `AiService` envia `temperature: 0.2` e `max_tokens`, e modelos de raciocínio rejeitam os dois (exigem `max_completion_tokens` e só aceitam a temperatura padrão). Abrir mão da temperatura baixa contrariaria a fundamentação 4.2.3. Se um dia a etapa de quantidades precisar de raciocínio, o caminho é uma **segunda instância de `AiService` só para ela** — as chamadas já estão separadas, e a etapa 2 é a de menor prompt.
+
+O timeout é **por chamada** (60s): 3 × 60s ainda cabe nos 210s de timeout do axios no app. O `AbortSignal` por requisição continua necessário porque o `timeout` do SDK é limpo quando chegam os cabeçalhos, e a geração acontece depois disso.
+
+**`SIMULAR_IA` decide quem monta o plano** e vem **ligada** por padrão: com ela, `plano-simulado.generator` devolve o fixture de `src/data/plano-simulado.ts` em vez de chamar a IA. A troca é feita na composição da rota (`plan.routes.ts`), atrás da interface `GeradorDePlano`; o `plan.service` não sabe qual dos dois recebeu.
+
+Nos testes o `ai.service` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede. O fake responde **por etapa**, e não por ordem de chamada: dieta e treino rodam em `Promise.all`, então a ordem de chegada não é determinística.
 
 ### Latência
 
-Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio). O timeout do axios no mobile está em 10s, então o app ainda **não** consegue consumir esta rota — resolver isso (geração em background, com o app consultando o resultado depois) é trabalho pendente.
+A chamada única na DeepSeek levava **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio) e era o motivo de `SIMULAR_IA` existir. A divisão em três ataca justamente isso, mas o número real **ainda não foi medido** — use `GET /api/teste-geracao`, que reporta o tempo de cada etapa separadamente.
+
+O timeout do axios no mobile é de 210s, e o teto por chamada é 60s.
 
 ## Endpoints
 
@@ -435,9 +488,9 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 | `POST` | `/api/refeicao` | `{ usuarioId, refeicaoId }` → **201** `{ dia, registros, consumido, metas, totalRefeicoes }`. **Idempotente**: marcar de novo no mesmo dia não duplica. | **400** sem refeicaoId; **404** sem plano ativo, ou refeição que não é do usuário |
 | `GET` | `/api/refeicao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
 | `DELETE` | `/api/refeicao/:usuarioId/:refeicaoId` | Desmarca a de hoje → **200** mesmo formato | **404** não está marcada hoje **ou é de outro usuário** |
-| `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve tempo, tokens e validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
+| `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve o tempo **de cada etapa** e a validação. Ignora `SIMULAR_IA` de propósito. Os tokens saem nos logs `[ia:<etapa>]`. | devolve `success: false` no corpo em vez de lançar |
 
-O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` leva ~3 min — ver "Latência".
+O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` são três chamadas à IA — ver "Latência".
 
 O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir um id lê o plano alheio. Sai quando a autenticação real entrar.
 
@@ -476,7 +529,8 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 
 - **Auth real**: JWT em `auth.service` (o `jsonwebtoken` já está instalado) e o `usuarioId` saindo da URL do plano.
 - **Validação campo a campo do payload** — hoje só o perfil é validado, dentro do `engine.service`.
-- **Latência**: a rota da IA leva ~3 min e o mobile tem timeout de 210s. É o motivo de `SIMULAR_IA` existir. Resolver de verdade exige geração em background com o app consultando o resultado depois.
+- **Medir a latência real**: a divisão em três chamadas foi feita para atacá-la, mas o número ainda não foi medido com chave de verdade. `GET /api/teste-geracao` reporta etapa a etapa. Se continuar alta, a chamada de seleção é a maior (~17k caracteres) e o caminho é classificar a TACO por refeição, filtrando por código.
+- **O padrão brasileiro é instrução, não garantia.** Se voltar a aparecer merluza no café da manhã, ver `padrao-refeicoes.ts` — o conserto estrutural é o filtro por refeição.
 - **Retry automático** quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
 - **Registro de treino** (`treino.service`): criar os models no `schema.prisma`, o repository, o controller e as rotas, no mesmo caminho que `hidratacao` e `refeicao` já percorreram. Reusa `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
 - **Escrita sem autenticação**: as rotas de hidratação e refeição aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.

@@ -11,7 +11,7 @@ import { Periodo } from "../types/registro.types";
  * `RegistroHidratacao` guarda só o instante.
  *
  * Fica em config/ porque é característica do ambiente, não regra de domínio —
- * mesmo lugar de deepseek.ts, que também exporta função e não só constante.
+ * mesmo lugar de ia.ts, que também exporta função e não só constante.
  * E fica num arquivo próprio, em vez de dentro do service que usa hoje, porque
  * os registros de refeição e de treino vão precisar exatamente do mesmo corte:
  * duas cópias desta conta divergiriam, como já divergiram as duas cópias do

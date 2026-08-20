@@ -6,7 +6,7 @@
 // Não toca no banco: as rotas cobertas aqui, ou não usam Prisma, ou falham na
 // validação antes de chegar nele.
 
-// A flag é lida na carga de config/deepseek.ts, então precisa estar definida
+// A flag é lida na carga de config/ia.ts, então precisa estar definida
 // ANTES do import do app — daí o require() lá embaixo em vez de import.
 process.env.SIMULAR_IA = "true";
 

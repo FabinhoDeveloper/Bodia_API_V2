@@ -1,15 +1,8 @@
 import { PerfilOnboardingInput } from "../types/perfil.types";
+import { EtapaBenchmark } from "../types/benchmark.types";
 import { PlanoGerado, Validacao } from "../types/plano.types";
 import EngineService from "../services/engine.service";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
-
-export interface TokensBenchmark {
-    prompt: number | null;
-    completion: number | null;
-    reasoning: number | null;
-    cached: number | null;
-    total: number | null;
-}
 
 export interface RespostaBenchmark {
     success: boolean;
@@ -19,25 +12,19 @@ export interface RespostaBenchmark {
         preparacao_ms: number;
         llm_ms: number;
     };
-    tokens: TokensBenchmark;
-    finish_reason: string | null;
-    // Objeto usage exatamente como a DeepSeek devolveu — ver AiService
-    // .gerarJsonComMetricas. Fica aqui para conferir campo por campo o que o
-    // provider realmente manda, sem depender do que este endpoint decidiu
-    // extrair em `tokens`.
-    usage_raw: Record<string, unknown> | null;
-    resposta_id: string | null;
+    /**
+     * Tempo de cada trilha (dieta = seleção + quantidades; treino), medido em
+     * sequência. É o dado que diz se dividir a geração em três chamadas valeu, e
+     * qual etapa domina o tempo.
+     */
+    etapas: EtapaBenchmark[];
     resposta: {
-        caracteres: number | null;
-        bytes: number | null;
         json_valido: boolean;
         validacao_ok: boolean | null;
-        // Desvio por macro (meta vs. obtido) que embasa validacao_ok — null
-        // quando o plano nem chegou a ser parseado (json_valido: false).
+        // Desvio por macro (meta vs. obtido) que embasa validacao_ok.
         validacao: Validacao | null;
-        // O plano tal como a IA devolveu, já convertido de JSON. Fica presente
-        // mesmo que validacao_ok seja false (ex.: id alucinado) — é útil
-        // justamente para inspecionar o que a IA tentou montar.
+        // O plano tal como a IA montou. Fica presente mesmo com validacao_ok
+        // false — é justamente para inspecionar o que ela tentou fazer.
         plano: PlanoGerado | null;
     } | null;
     erro: { tipo: string; mensagem: string } | null;
@@ -63,21 +50,27 @@ const PERFIL_FICTICIO: PerfilOnboardingInput = {
 
 /**
  * Orquestrador do benchmark de geração (GET /api/teste-geracao). Isolado do
- * fluxo real do app: usa EngineService e PlanoIaGenerator (os mesmos das
- * produção, injetados por construtor como qualquer outro service), mas com
- * um perfil fictício fixo em vez do payload de /api/onboarding, e chama
- * PlanoIaGenerator.gerarComMetricas em vez de gerar() — método que existe só
- * para isto e não é usado em nenhum caminho de produção.
+ * fluxo real do app: usa EngineService e PlanoIaGenerator (os mesmos de
+ * produção, injetados por construtor), mas com um perfil fictício fixo em vez
+ * do payload de /api/onboarding, e chama PlanoIaGenerator.gerarComMetricas em
+ * vez de gerar() — método que existe só para isto.
  *
- * Não altera EngineService, CatalogoFilter nem PlanoPrompt: usa
- * exatamente a versão de produção de cada um.
+ * CONTAGEM DE TOKENS não vem na resposta. Com três chamadas ao modelo não
+ * existe mais um `usage` único, e bombear o de cada uma até aqui obrigaria os
+ * geradores de produção a carregar métrica de um endpoint temporário. Os
+ * tokens de cada etapa saem no console, nos logs `[ia:<etapa>]` — que é onde se
+ * olha ao rodar o benchmark de qualquer forma.
  */
 export default class BenchmarkService {
     private readonly engineService;
     private readonly planoIaGenerator;
     private readonly modeloConfigurado;
 
-    constructor(engineService: EngineService, planoIaGenerator: PlanoIaGenerator, modeloConfigurado: string) {
+    constructor(
+        engineService: EngineService,
+        planoIaGenerator: PlanoIaGenerator,
+        modeloConfigurado: string,
+    ) {
         this.engineService = engineService;
         this.planoIaGenerator = planoIaGenerator;
         this.modeloConfigurado = modeloConfigurado;
@@ -92,8 +85,6 @@ export default class BenchmarkService {
         const resultado = this.engineService.calcular(PERFIL_FICTICIO);
         const calculoMs = performance.now() - inicioCalculo;
 
-        console.log("[benchmark] chamada LLM iniciada");
-
         const resultadoGeracao = await this.planoIaGenerator.gerarComMetricas(
             {
                 restricoesAlimentares: PERFIL_FICTICIO.restricoesAlimentares,
@@ -102,25 +93,18 @@ export default class BenchmarkService {
             resultado,
         );
 
-        console.log(`[benchmark] chamada LLM finalizada: ${resultadoGeracao.llmMs.toFixed(1)} ms`);
-
-        const usage = resultadoGeracao.usage ?? null;
-        const tokens = this.extrairTokens(usage);
         const preparacaoMs = calculoMs + resultadoGeracao.prepMs;
         const totalMs = performance.now() - inicioTotal;
 
+        for (const etapa of resultadoGeracao.etapas) {
+            const estado = etapa.sucesso ? "ok" : "FALHOU";
+            console.log(`[benchmark] etapa ${etapa.nome}: ${etapa.ms.toFixed(1)} ms (${estado})`);
+        }
         console.log(`[benchmark] preparação: ${preparacaoMs.toFixed(1)} ms`);
-        console.log(`[benchmark] prompt tokens: ${tokens.prompt}`);
-        console.log(`[benchmark] completion tokens: ${tokens.completion}`);
-        console.log(`[benchmark] reasoning tokens: ${tokens.reasoning}`);
-        console.log(`[benchmark] total tokens: ${tokens.total}`);
-        console.log(`[benchmark] finish reason: ${resultadoGeracao.finishReason ?? "null"}`);
         console.log(`[benchmark] json válido: ${resultadoGeracao.jsonValido}`);
         console.log(`[benchmark] validação ok: ${resultadoGeracao.validacaoOk}`);
         console.log(`[benchmark] tempo total: ${totalMs.toFixed(1)} ms`);
-        // Log do objeto usage bruto — só ele diz com certeza quais campos a
-        // DeepSeek realmente devolveu hoje (ex.: se cached_tokens existe ou não).
-        console.log("[benchmark] usage bruto:", JSON.stringify(usage));
+
         if (resultadoGeracao.erro) {
             console.log(
                 `[benchmark] erro: ${resultadoGeracao.erro.tipo} — ${resultadoGeracao.erro.mensagem}`,
@@ -129,20 +113,18 @@ export default class BenchmarkService {
 
         return {
             success: resultadoGeracao.sucesso,
-            modelo: resultadoGeracao.modeloRespondido,
+            modelo: this.modeloConfigurado,
             tempo: {
                 total_ms: this.arredondar(totalMs),
                 preparacao_ms: this.arredondar(preparacaoMs),
                 llm_ms: this.arredondar(resultadoGeracao.llmMs),
             },
-            tokens,
-            finish_reason: resultadoGeracao.finishReason,
-            usage_raw: usage,
-            resposta_id: resultadoGeracao.respostaId,
+            etapas: resultadoGeracao.etapas.map((etapa) => ({
+                ...etapa,
+                ms: this.arredondar(etapa.ms),
+            })),
             resposta: resultadoGeracao.sucesso
                 ? {
-                      caracteres: resultadoGeracao.respostaCaracteres,
-                      bytes: resultadoGeracao.respostaBytes,
                       json_valido: resultadoGeracao.jsonValido,
                       validacao_ok: resultadoGeracao.validacaoOk,
                       validacao: resultadoGeracao.validacao,
@@ -151,28 +133,6 @@ export default class BenchmarkService {
                 : null,
             erro: resultadoGeracao.erro,
         };
-    }
-
-    // Só lê os campos que o SDK documenta (prompt_tokens, completion_tokens,
-    // total_tokens, completion_tokens_details.reasoning_tokens,
-    // prompt_tokens_details.cached_tokens — ver node_modules/openai/resources
-    // /completions.d.ts, interface CompletionUsage). Qualquer campo ausente
-    // vira null; nada aqui é estimado ou calculado.
-    private extrairTokens(usage: Record<string, unknown> | null): TokensBenchmark {
-        const completionDetails = usage?.completion_tokens_details as Record<string, unknown> | undefined;
-        const promptDetails = usage?.prompt_tokens_details as Record<string, unknown> | undefined;
-
-        return {
-            prompt: this.numeroOuNulo(usage?.prompt_tokens),
-            completion: this.numeroOuNulo(usage?.completion_tokens),
-            reasoning: this.numeroOuNulo(completionDetails?.reasoning_tokens),
-            cached: this.numeroOuNulo(promptDetails?.cached_tokens),
-            total: this.numeroOuNulo(usage?.total_tokens),
-        };
-    }
-
-    private numeroOuNulo(valor: unknown): number | null {
-        return typeof valor === "number" ? valor : null;
     }
 
     private arredondar(ms: number): number {
