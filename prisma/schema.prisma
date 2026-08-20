@@ -13,9 +13,10 @@
 //
 // Execução (o que o usuário de fato fez):
 //   RegistroHidratacao — água ingerida
+//   RegistroRefeicao   — refeição prescrita marcada como consumida
 //
 // Prescrição e execução são coisas distintas e vivem em tabelas próprias.
-// Ainda não modelado: treino feito e refeição consumida.
+// Ainda não modelado: treino feito.
 //
 // Os enums espelham os tipos de src/services/CalculoService.ts.
 
@@ -109,6 +110,7 @@ model Usuario {
   fichasTreino      FichaTreino[]
   fichasAlimentacao FichaAlimentacao[]
   hidratacoes       RegistroHidratacao[]
+  refeicoesFeitas   RegistroRefeicao[]
 }
 
 /// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo
@@ -267,8 +269,9 @@ model Refeicao {
   carboidratoG Int
   gorduraG     Int
 
-  fichaAlimentacao FichaAlimentacao @relation(fields: [fichaAlimentacaoId], references: [id], onDelete: Cascade)
+  fichaAlimentacao FichaAlimentacao   @relation(fields: [fichaAlimentacaoId], references: [id], onDelete: Cascade)
   itens            ItemRefeicao[]
+  registros        RegistroRefeicao[]
 
   @@index([fichaAlimentacaoId])
 }
@@ -319,6 +322,35 @@ model RegistroHidratacao {
 
   /// Serve às duas consultas que existem: o total do dia e o histórico por
   /// período.
+  @@index([usuarioId, registradoEm])
+}
+
+/// Uma refeição prescrita que o usuário marcou como comida.
+///
+/// Ao contrário da hidratação, isto NÃO é log acumulativo: existe no máximo um
+/// registro por (refeição, dia), e marcar de novo não deve criar outra linha.
+///
+/// ATENÇÃO: esse "um por dia" NÃO é garantido por constraint. Expressá-lo em
+/// SQL exigiria uma coluna `dia` (cópia derivada, recusada aqui pelos mesmos
+/// motivos de RegistroHidratacao) ou um índice por expressão, que espalharia o
+/// offset do fuso para fora de config/fuso.ts. A garantia é do RefeicaoService,
+/// que consulta a janela do dia antes de inserir — mesma natureza da regra
+/// "só uma ficha ativa por usuário", que também vive no código.
+///
+/// Os macros NÃO são copiados para cá: vêm da Refeicao pelo FK, como
+/// ItemRefeicao faz com o catálogo. Como a ficha antiga é desativada e nunca
+/// apagada, o FK preserva sozinho o que foi comido naquele dia — inclusive
+/// depois de o usuário gerar um plano novo.
+model RegistroRefeicao {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  refeicaoId   String
+  registradoEm DateTime @default(now())
+
+  usuario  Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  refeicao Refeicao @relation(fields: [refeicaoId], references: [id], onDelete: Cascade)
+
+  /// O dia do usuário e o histórico por período.
   @@index([usuarioId, registradoEm])
 }
 

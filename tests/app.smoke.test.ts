@@ -81,6 +81,9 @@ describe("app (smoke)", () => {
                 "POST /api/hidratacao",
                 "GET /api/hidratacao/:usuarioId",
                 "DELETE /api/hidratacao/:usuarioId/:registroId",
+                "POST /api/refeicao",
+                "GET /api/refeicao/:usuarioId",
+                "DELETE /api/refeicao/:usuarioId/:refeicaoId",
             ]),
         );
     });
@@ -186,6 +189,26 @@ describe("app (smoke)", () => {
 
         it("devolve 400 quando o dia da query não é AAAA-MM-DD", async () => {
             const resposta = await request(app).get("/api/hidratacao/qualquer?dia=19/08/2026");
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/dia/i);
+        });
+    });
+
+    describe("refeição", () => {
+        // Também rodam antes do Prisma: o refeicaoId ausente é recusado na
+        // primeira linha do service, e o dia malformado no controller.
+        it("devolve 400 ao marcar sem refeicaoId", async () => {
+            const resposta = await request(app)
+                .post("/api/refeicao")
+                .send({ usuarioId: "qualquer" });
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/refeicaoId/i);
+        });
+
+        it("devolve 400 quando o dia da query não é AAAA-MM-DD", async () => {
+            const resposta = await request(app).get("/api/refeicao/qualquer?dia=ontem");
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);

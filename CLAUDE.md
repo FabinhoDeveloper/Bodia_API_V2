@@ -1,6 +1,6 @@
 # BodIA — Backend
 
-API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro, devolve o plano ao app e registra a hidratação do dia — **ainda não há JWT nem validação campo a campo do payload**.
+API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro, devolve o plano ao app e registra a hidratação e as refeições do dia — **ainda não há JWT nem validação campo a campo do payload**.
 
 Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
 
@@ -37,7 +37,7 @@ Existem porque tipo declarado junto da classe que o produz força dependência p
 | `perfil.types.ts` | `PerfilInput`, `PerfilOnboardingInput`, `ContaInput`, `ResultadoCalculo` |
 | `plano.types.ts` | `PlanoGerado`, `PlanoDTO`, `MeuPlano`, `Validacao`, `GeradorDePlano`, os payloads das rotas |
 | `auth.types.ts` | `LoginInput`, `UsuarioAutenticado` |
-| `registro.types.ts` | registros de refeição/hidratação/treino; refeição e treino ainda sem model no Prisma |
+| `registro.types.ts` | registros de refeição/hidratação/treino; só o treino ainda sem model no Prisma |
 | `benchmark.types.ts` | só do endpoint temporário — sai junto com ele |
 
 ### Repository (`src/repositories/`)
@@ -72,13 +72,13 @@ Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que pre
 | `user.service.ts` | cadastro; futuramente atualização, exclusão e perfil | cadastro pronto |
 | `plan.service.ts` | gerar, consultar e (via user) persistir o plano | pronto |
 | `ai.service.ts` | comunicação com a DeepSeek: envia prompt, devolve resposta | pronto |
-| `refeicao.service.ts` | registro/histórico de refeições | **esqueleto** |
+| `refeicao.service.ts` | registro/histórico de refeições | pronto |
 | `hidratacao.service.ts` | registro/histórico de hidratação | pronto |
 | `treino.service.ts` | registro de treino e exercícios | **esqueleto** |
 
-Os **dois** esqueletos restantes (`refeicao`, `treino`) lançam `"não implementado"` e **não têm rota**: dependem de model que ainda não existe no `schema.prisma`. O que falta em cada um está no cabeçalho do arquivo.
+Só `treino.service` ainda é esqueleto: lança `"não implementado"` e **não tem rota**, porque depende de models que ainda não existem no `schema.prisma`. O que falta está no cabeçalho do arquivo.
 
-`hidratacao.service` foi o primeiro a sair do esqueleto — o caminho que ele percorreu (model → migration → repository → controller → rota) é o roteiro dos outros dois.
+`hidratacao` e `refeicao` já percorreram o caminho (model → migration → repository → controller → rota) — é o roteiro do que sobrou.
 
 ### O que entra em `services/`
 
@@ -201,7 +201,7 @@ backend/
       user.service.ts         # cadastro
       plan.service.ts         # gerar e consultar o plano
       ai.service.ts           # adaptador DeepSeek
-      refeicao.service.ts     # esqueleto — falta model
+      refeicao.service.ts     # refeições marcadas como comidas
       hidratacao.service.ts   # registro de água do dia
       treino.service.ts       # esqueleto — falta model
     generators/               # quem monta o plano (interface GeradorDePlano)
@@ -216,12 +216,13 @@ backend/
       catalogo.filter.ts      # aplica as restrições ANTES do prompt
     repositories/
       user.repository.ts      plan.repository.ts
-      hidratacao.repository.ts
+      hidratacao.repository.ts  refeicao.repository.ts
     controllers/
       auth.controller.ts      user.controller.ts      plan.controller.ts
-      hidratacao.controller.ts
+      hidratacao.controller.ts  refeicao.controller.ts
     routes/
-      auth.routes.ts  user.routes.ts  plan.routes.ts  hidratacao.routes.ts
+      auth.routes.ts  user.routes.ts  plan.routes.ts
+      hidratacao.routes.ts  refeicao.routes.ts
       index.ts                # agrega os routers, montado em /api
     benchmark/                # endpoint TEMPORÁRIO, isolado
       benchmark.service.ts    benchmark.controller.ts   benchmark.routes.ts
@@ -431,6 +432,9 @@ Uma geração leva **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocín
 | `POST` | `/api/hidratacao` | `{ usuarioId, volumeMl }` → **201** `{ dia, totalMl, metaMl, registros }`. Registra água e devolve o dia já somado. | **400** volumeMl fora de 1–5000 ou não inteiro; **404** usuário sem plano ativo |
 | `GET` | `/api/hidratacao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
 | `DELETE` | `/api/hidratacao/:usuarioId/:registroId` | Desfaz um registro → **200** mesmo formato | **404** registro inexistente **ou de outro usuário** |
+| `POST` | `/api/refeicao` | `{ usuarioId, refeicaoId }` → **201** `{ dia, registros, consumido, metas, totalRefeicoes }`. **Idempotente**: marcar de novo no mesmo dia não duplica. | **400** sem refeicaoId; **404** sem plano ativo, ou refeição que não é do usuário |
+| `GET` | `/api/refeicao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
+| `DELETE` | `/api/refeicao/:usuarioId/:refeicaoId` | Desmarca a de hoje → **200** mesmo formato | **404** não está marcada hoje **ou é de outro usuário** |
 | `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve tempo, tokens e validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
 
 O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` leva ~3 min — ver "Latência".
@@ -439,11 +443,30 @@ O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir 
 
 Nas rotas de hidratação o mesmo buraco é **pior**, porque ali não se lê: se **escreve e se apaga** no histórico alheio. O `usuarioId` no path do `DELETE` não é decoração — é ele que o repository usa no `where` para impedir que um registroId sozinho apague linha de outra pessoa. Registro inexistente e registro alheio devolvem os dois **404**, nunca 403: um 403 confirmaria a existência do registro do outro.
 
+### Refeição é toggle, hidratação é log
+
+A diferença muda o desenho dos dois recursos:
+
+- **Hidratação** acumula: vários goles por dia, cada toque é uma linha, e desfazer apaga uma linha pelo `registroId`.
+- **Refeição** é liga/desliga: no máximo **um** registro por (refeição, dia), e desmarcar apaga pelo `refeicaoId` — que é o identificador que o app tem em mãos vindo do plano.
+
+Esse "um por dia" **não é constraint no banco**. Expressá-lo em SQL exigiria uma coluna `dia` (cópia derivada, recusada) ou um índice por expressão, que espalharia o offset do fuso para fora de `config/fuso.ts`. A garantia é do `RefeicaoService`, que consulta a janela do dia antes de inserir — mesma natureza da regra "só uma ficha ativa por usuário", que também vive no código.
+
+Por isso `POST /api/refeicao` é **idempotente**: marcar de novo devolve o dia como está. Não é refinamento — com a UI otimista do app, reenviar depois de uma falha de rede é rotina, e sem isso o almoço entraria duas vezes na conta de calorias.
+
+### O `consumido` é somado no servidor, e isso não é detalhe
+
+`ResumoRefeicoesDia.consumido` vem do JOIN entre `RegistroRefeicao` e `Refeicao`, não da ficha ativa.
+
+O motivo é o plano regenerado no meio do dia: a refeição marcada de manhã aponta para a `Refeicao` da ficha **antiga**, que continua no banco (desativada, nunca apagada). O backend lê os macros dela pelo FK e a conta do dia continua certa. Se o app somasse — como fazia com a antiga `somarConsumido` —, essas calorias sumiriam, porque o app só tem em mãos a ficha ativa.
+
+Pela mesma lógica, a resposta **não** traz um campo `refeicoesFeitas: string[]`: ele seria derivável de `registros` e as duas cópias poderiam divergir.
+
 ### Por que o dia é recortado no servidor (`config/fuso.ts`)
 
-`RegistroHidratacao` guarda só o instante (UTC). O dia a que ele pertence é calculado na leitura, com offset fixo de **America/Sao_Paulo (−3)**.
+`RegistroHidratacao` e `RegistroRefeicao` guardam só o instante (UTC). O dia a que ele pertence é calculado na leitura, com offset fixo de **America/Sao_Paulo (−3)**.
 
-Isso existe porque o servidor roda em UTC e o usuário não: uma ceia às 22h em Brasília é 01h UTC do **dia seguinte**, então cortar pela data UTC gravaria a água da noite no dia errado. O app **não envia data** — a regra é uma só, e fica no servidor.
+Isso existe porque o servidor roda em UTC e o usuário não: uma ceia às 22h em Brasília é 01h UTC do **dia seguinte**, então cortar pela data UTC jogaria a água e o jantar da noite no dia errado. O app **não envia data** — a regra é uma só, e fica no servidor.
 
 Não há coluna `dia` de propósito: ela seria derivada de `registradoEm` mais o fuso, e duas cópias do mesmo fato divergem (a mesma razão pela qual o peso atual não é campo em `Usuario`).
 
@@ -455,7 +478,8 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 - **Validação campo a campo do payload** — hoje só o perfil é validado, dentro do `engine.service`.
 - **Latência**: a rota da IA leva ~3 min e o mobile tem timeout de 210s. É o motivo de `SIMULAR_IA` existir. Resolver de verdade exige geração em background com o app consultando o resultado depois.
 - **Retry automático** quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
-- **Os dois services de registro restantes** (`refeicao`, `treino`): criar os models no `schema.prisma`, os repositories, os controllers e as rotas, no mesmo caminho que `hidratacao` já percorreu. Ambos reusam `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
-- **Escrita sem autenticação**: as rotas de hidratação aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.
+- **Registro de treino** (`treino.service`): criar os models no `schema.prisma`, o repository, o controller e as rotas, no mesmo caminho que `hidratacao` e `refeicao` já percorreram. Reusa `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
+- **Escrita sem autenticação**: as rotas de hidratação e refeição aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.
+- **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
 - **`ultimoPesoKg` na tabela errada**: o campo vive em `ExercicioSessao`, que pertence à ficha. Gerar plano novo cria ficha nova com o campo nulo, e o usuário perde a carga de todos os exercícios. A carga é atributo do par (usuário, exercício do catálogo) — precisa mudar de lugar antes de o registro de treino entrar.
 - **Remover `benchmark/`** quando o caminho da IA estabilizar.

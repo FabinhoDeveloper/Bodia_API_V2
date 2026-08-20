@@ -3,9 +3,9 @@
  * foi prescrito para ele.
  *
  * A prescrição (ficha de treino, ficha de alimentação) já existe no schema e é
- * lida por PlanService.consultar. Estes registros ainda NÃO têm model no
- * Prisma: hoje o app guarda tudo local. Os tipos ficam aqui para que os
- * services de registro tenham um contrato declarado antes da migration.
+ * lida por PlanService.consultar. Hidratação e refeição já têm model; o
+ * registro de treino ainda não, e o tipo fica aqui para o service ter um
+ * contrato declarado antes da migration.
  */
 
 export interface RegistroRefeicao {
@@ -14,6 +14,54 @@ export interface RegistroRefeicao {
     /** FK para Refeicao (a refeição prescrita que foi cumprida). */
     refeicaoId: string;
     registradoEm: Date;
+}
+
+/**
+ * O registro com a prescrição junto, como o repository o devolve.
+ *
+ * Os macros vêm do JOIN, não copiados na tabela de registro. É isso que mantém
+ * a soma correta quando o usuário gera um plano novo no meio do dia: o registro
+ * aponta para a Refeicao da ficha ANTIGA, que continua no banco (desativada,
+ * nunca apagada) e ainda responde pelos seus macros.
+ */
+export interface RegistroRefeicaoComPrescricao extends RegistroRefeicao {
+    refeicao: {
+        nome: string;
+        horario: string;
+        kcal: number;
+        proteinaG: number;
+        carboidratoG: number;
+        gorduraG: number;
+    };
+}
+
+/** Os macros de um dia — a mesma forma para o consumido e para a meta. */
+export interface Macros {
+    kcal: number;
+    proteinaG: number;
+    carboidratoG: number;
+    gorduraG: number;
+}
+
+/**
+ * O contrato das três rotas de refeição — marcar, consultar e desmarcar
+ * devolvem todas isto, no mesmo espírito de ResumoHidratacaoDia.
+ *
+ * NÃO existe um campo `refeicoesFeitas: string[]`: ele seria derivável de
+ * `registros` e as duas cópias poderiam divergir. O app monta o conjunto com
+ * `new Set(registros.map((r) => r.refeicaoId))`.
+ *
+ * `consumido`, ao contrário, NÃO é derivável no app: somá-lo exige os macros da
+ * ficha em que cada refeição foi prescrita, e o app só tem em mãos a ativa.
+ */
+export interface ResumoRefeicoesDia {
+    /** "AAAA-MM-DD" no fuso do usuário — ver config/fuso.ts. */
+    dia: string;
+    registros: RegistroRefeicaoComPrescricao[];
+    consumido: Macros;
+    metas: Macros;
+    /** Quantas refeições a ficha ativa prescreve — o denominador de "faltam N". */
+    totalRefeicoes: number;
 }
 
 export interface RegistroHidratacao {

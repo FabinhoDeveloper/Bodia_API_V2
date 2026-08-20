@@ -32,6 +32,28 @@ export default class PlanRepository {
         return ficha?.metaAguaMl ?? null;
     }
 
+    /**
+     * A ficha de alimentação ativa, com metas e os ids das refeições — sem os
+     * itens nem o catálogo.
+     *
+     * Serve a três coisas de uma vez no registro de refeição: as metas da
+     * resposta, o total de refeições do dia e a CONFERÊNCIA DE POSSE do
+     * refeicaoId. Sem essa conferência qualquer um marcaria refeição alheia e
+     * somaria macros de outra pessoa no próprio dia.
+     */
+    buscarFichaAlimentacaoAtiva(usuarioId: string) {
+        return this.prismaClient.fichaAlimentacao.findFirst({
+            where: { usuarioId, ativa: true },
+            select: {
+                caloriasAlvo: true,
+                proteinaG: true,
+                carboidratoG: true,
+                gorduraG: true,
+                refeicoes: { select: { id: true } },
+            },
+        });
+    }
+
     buscarPlanoAtivo(usuarioId: string) {
         return this.prismaClient.usuario.findUnique({
             where: { id: usuarioId },
