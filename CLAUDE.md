@@ -88,7 +88,7 @@ Só classe que é **ponto de entrada de um domínio**. O resto é colaborador e 
 |---|---|---|
 | `mappers/` | tradução entre formato interno e contrato da API | `plano.mapper.ts` (escrita), `meu-plano.mapper.ts` (leitura), `perfil.mapper.ts` (string → enum) |
 | `prompts/` | construção dos prompts e o filtro que os alimenta | `dieta-selecao.prompt.ts`, `dieta-quantidades.prompt.ts`, `treino.prompt.ts`, `catalogo.filter.ts` |
-| `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts` (orquestra), `dieta-ia.generator.ts`, `treino-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts` |
+| `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts` (orquestra), `dieta-ia.generator.ts`, `treino-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts`, `validador-volume.ts` |
 | `benchmark/` | endpoint temporário, service + controller + rota juntos | `benchmark.*.ts` |
 
 A regra prática: **se a classe não é chamada direto por um controller, provavelmente é colaborador.** Criar um service novo só porque uma classe ficou grande recria o problema que essa organização resolveu — services que não eram domínio nenhum.
@@ -210,7 +210,8 @@ backend/
       dieta-ia.generator.ts   # chamadas 1 e 2 (seleção -> quantidades)
       treino-ia.generator.ts  # chamada 3
       plano-simulado.generator.ts
-      validador-macros.ts     # conferência de macros, usada por todos
+      validador-macros.ts     # confere kcal/macros contra a TACO
+      validador-volume.ts     # confere séries por grupo contra o orçamento
     mappers/
       plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
       meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
@@ -240,6 +241,7 @@ backend/
     data/
       alimentos.ts            # GERADO por scripts/importar-taco.ts — não editar
       exercicios.ts           # catálogo escrito à mão
+      volume-treino.ts        # limites e política de volume (primário/secundário)
       plano-simulado.ts       # fixture usado quando SIMULAR_IA=true
     middlewares/
       error-handler.ts        not-found-handler.ts
@@ -415,6 +417,22 @@ Filtra os catálogos **antes** de montar o prompt. O modelo não recebe leite pa
 
 Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso negativo não**. Remover um alimento seguro custa variedade; manter um proibido pode machucar alguém. A exceção `VEGETAIS_COM_NOME_DE_LATICINIO` existe porque "Couve, manteiga" é hortaliça e "Soja, queijo (tofu)" é vegano — sem ela, o filtro de lactose comeria a couve.
 
+### O volume de treino sai pronto do motor, não é dividido pelo LLM
+
+`EngineService` entrega, por sessão, **quantas séries cada grupo muscular recebe naquela sessão** — já dividido pela frequência semanal. O prompt só pede exercícios que somem aquilo.
+
+Antes o motor mandava um total semanal e o prompt dizia "distribua". As duas coisas nunca foram confrontadas e **não fechavam**: em 13 das 15 combinações de dias x nível o orçamento exigia mais exercícios do que o próprio prompt permitia (o Upper de 4 dias/intermediário pedia 14 exercícios num teto de 7). O modelo recebia tarefa impossível e devolvia volume arbitrário — sem ninguém conferir.
+
+Três peças sustentam a correção, todas em `src/data/volume-treino.ts`:
+
+- **`GRUPOS_POR_SESSAO`** — quais grupos cada sessão treina e em que papel. Fica ali, e **não** derivado de `exercicios.ts`: o catálogo diz quais exercícios *cabem* numa sessão, esta tabela diz quais grupos recebem *volume*. Derivar do catálogo faria o filtro de restrição alterar a prescrição sem ninguém pedir.
+- **`FRACAO_SECUNDARIO`** — grupos pequenos (bíceps, tríceps, panturrilha) recebem volume direto reduzido. **Precisa de fonte na fundamentação teórica**; o comentário no arquivo diz exatamente quais afirmações.
+- **`MAX_SERIES_POR_GRUPO_SESSAO`** — sem ele, um split que treina o grupo 1x/semana empilhava a semana inteira numa sessão (18 séries de peito num treino). A consequência é deliberada: em splits de baixa frequência o total semanal fica **abaixo** do alvo, e o `ValidadorVolume` reporta a diferença.
+
+Os limites de exercícios e séries deixaram de ser frase no prompt e viraram **constantes exportadas**, lidas pelo motor, pelo prompt e pelo validador. Estarem só no texto é exatamente por que a contradição passou despercebida.
+
+A viabilidade é garantida **por construção**: o motor apara o orçamento (secundário primeiro, primário depois) até caber. `tests/services/engine.service.test.ts` cobre as 15 combinações — é a regressão que faltava.
+
 ### Os prompts — as três técnicas da fundamentação teórica (4.5.2)
 
 Cada um dos três prompts aplica as mesmas técnicas, com o conteúdo que lhe diz respeito:
@@ -445,6 +463,7 @@ A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 4. **Gramas**: precisam ser número finito e positivo.
 5. **IDs do treino**: mesma regra do catálogo filtrado.
 6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
+7. **Volume de treino**: `validador-volume` soma as séries por grupo a partir dos exercícios escolhidos e compara com o orçamento do motor, tolerando uma série de diferença (arredondamento legítimo). Também acusa grupo treinado fora do orçamento. Era o irmão que faltava — a dieta tinha os números conferidos e o treino não tinha nada.
 
 Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa só mede.
 
@@ -535,5 +554,6 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 - **Registro de treino** (`treino.service`): criar os models no `schema.prisma`, o repository, o controller e as rotas, no mesmo caminho que `hidratacao` e `refeicao` já percorreram. Reusa `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
 - **Escrita sem autenticação**: as rotas de hidratação e refeição aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.
 - **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
+- **Fundamentar `FRACAO_SECUNDARIO`**: a distinção primário/secundário e o argumento do estímulo indireto dos compostos ainda não têm citação. Ver o comentário em `src/data/volume-treino.ts`.
 - **`ultimoPesoKg` na tabela errada**: o campo vive em `ExercicioSessao`, que pertence à ficha. Gerar plano novo cria ficha nova com o campo nulo, e o usuário perde a carga de todos os exercícios. A carga é atributo do par (usuário, exercício do catálogo) — precisa mudar de lugar antes de o registro de treino entrar.
 - **Remover `benchmark/`** quando o caminho da IA estabilizar.

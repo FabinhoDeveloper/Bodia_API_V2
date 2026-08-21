@@ -5,6 +5,7 @@ import DietaIaGenerator from "../../src/generators/dieta-ia.generator";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
 import TreinoIaGenerator from "../../src/generators/treino-ia.generator";
 import ValidadorMacros from "../../src/generators/validador-macros";
+import ValidadorVolume from "../../src/generators/validador-volume";
 import DietaQuantidadesPrompt from "../../src/prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../../src/prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../../src/prompts/treino.prompt";
@@ -88,6 +89,7 @@ function criarGerador(respostas: Partial<Record<string, unknown | string>>) {
         new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
         new ValidadorMacros(),
+        new ValidadorVolume(),
     );
 
     return { planoIaGenerator, aiService };

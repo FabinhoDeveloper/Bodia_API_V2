@@ -1,8 +1,10 @@
 import { ALIMENTOS } from "../data/alimentos";
+import { EXERCICIOS } from "../data/exercicios";
 import { PLANO_SIMULADO } from "../data/plano-simulado";
 import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
 import { PlanoValidado } from "../types/plano.types";
 import ValidadorMacros from "./validador-macros";
+import ValidadorVolume from "./validador-volume";
 
 /**
  * Substitui o LLM enquanto o fluxo da IA está desativado (flag SIMULAR_IA).
@@ -17,15 +19,20 @@ import ValidadorMacros from "./validador-macros";
  */
 export default class PlanoSimuladoGenerator {
     private readonly validadorMacros;
+    private readonly validadorVolume;
 
-    constructor(validadorMacros: ValidadorMacros) {
+    constructor(validadorMacros: ValidadorMacros, validadorVolume: ValidadorVolume) {
         this.validadorMacros = validadorMacros;
+        this.validadorVolume = validadorVolume;
     }
 
     async gerar(_perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado> {
         return {
             plano: PLANO_SIMULADO,
             validacao: this.validadorMacros.validar(PLANO_SIMULADO, ALIMENTOS, resultado),
+            // Catálogo completo, e não o filtrado: o fixture é fixo e não conhece
+            // as restrições do usuário — filtrar só faria sumir exercício da conta.
+            validacaoVolume: this.validadorVolume.validar(PLANO_SIMULADO, EXERCICIOS, resultado),
         };
     }
 }

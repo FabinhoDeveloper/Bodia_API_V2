@@ -1,5 +1,12 @@
 import EngineService from "../../src/services/engine.service";
 import {
+    exerciciosNecessarios,
+    MAX_EXERCICIOS_POR_SESSAO,
+    MAX_SERIES_POR_EXERCICIO,
+    MAX_SERIES_POR_GRUPO_SESSAO,
+    MIN_SERIES_POR_EXERCICIO,
+} from "../../src/data/volume-treino";
+import {
     NivelAtividade,
     NivelExperiencia,
     Objetivo,
@@ -54,7 +61,7 @@ describe("EngineService", () => {
         });
 
         it("monta o split de treino e o volume por nível de experiência", () => {
-            expect(resultado.treino).toEqual({
+            expect(resultado.treino).toMatchObject({
                 diasPorSemana: 3,
                 split: "Push / Pull / Legs",
                 sessoes: [
@@ -102,7 +109,7 @@ describe("EngineService", () => {
 
         it("monta o split Upper/Lower para 4 dias", () => {
             expect(resultado.treino.split).toBe("Upper / Lower");
-            expect(resultado.treino.sessoes).toEqual([
+            expect(resultado.treino.sessoes).toMatchObject([
                 { nome: "Upper", frequenciaSemanal: 2 },
                 { nome: "Lower", frequenciaSemanal: 2 },
             ]);
@@ -164,6 +171,113 @@ describe("EngineService", () => {
             expect(resultado.treino.seriesPorGrupoSemana).toBe(seriesEsperadas);
         },
     );
+
+
+    /**
+     * A regressão que estes testes existem para impedir.
+     *
+     * O motor entregava um TOTAL semanal e o prompt mandava o LLM dividir. As
+     * duas coisas nunca foram confrontadas e não fechavam: em 13 das 15
+     * combinações de dias x nível, o orçamento exigia mais exercícios do que o
+     * próprio prompt permitia. O modelo recebia tarefa impossível e devolvia
+     * volume arbitrário — sem ninguém conferir.
+     *
+     * Agora o orçamento sai pronto do motor, e a viabilidade é garantida por
+     * construção. Se alguém mexer nas tabelas de volume-treino.ts e recriar a
+     * contradição, é aqui que aparece.
+     */
+    describe("orçamento de volume por sessão", () => {
+        const DIAS = [2, 3, 4, 5, 6];
+        const NIVEIS: NivelExperiencia[] = ["iniciante", "intermediario", "avancado"];
+
+        const combinacoes = DIAS.flatMap((dias) =>
+            NIVEIS.map((nivel) => [dias, nivel] as [number, NivelExperiencia]),
+        );
+
+        it.each(combinacoes)(
+            "%i dias / %s: toda sessão cabe nos limites de exercícios",
+            (diasPorSemana, nivelExperiencia) => {
+                const { treino } = engineService.calcular(
+                    perfilBase({ diasPorSemana, nivelExperiencia }),
+                );
+
+                for (const sessao of treino.sessoes) {
+                    expect(sessao.volume.length).toBeGreaterThan(0);
+                    expect(exerciciosNecessarios(sessao.volume)).toBeLessThanOrEqual(
+                        MAX_EXERCICIOS_POR_SESSAO,
+                    );
+                }
+            },
+        );
+
+        it.each(combinacoes)(
+            "%i dias / %s: nenhum grupo fica fora da faixa de séries",
+            (diasPorSemana, nivelExperiencia) => {
+                const { treino } = engineService.calcular(
+                    perfilBase({ diasPorSemana, nivelExperiencia }),
+                );
+
+                for (const sessao of treino.sessoes) {
+                    for (const item of sessao.volume) {
+                        expect(item.series).toBeGreaterThanOrEqual(MIN_SERIES_POR_EXERCICIO);
+                        expect(item.series).toBeLessThanOrEqual(MAX_SERIES_POR_GRUPO_SESSAO);
+                    }
+                }
+            },
+        );
+
+        it("dá mais volume a quem tem mais experiência, no mesmo split", () => {
+            const volumeDoPeito = (nivelExperiencia: NivelExperiencia) => {
+                const { treino } = engineService.calcular(
+                    perfilBase({ diasPorSemana: 4, nivelExperiencia }),
+                );
+                const upper = treino.sessoes.find((s) => s.nome === "Upper")!;
+                return upper.volume.find((v) => v.grupo === "Peito")!.series;
+            };
+
+            // Antes de existir o teto por grupo/sessão, o aparo do orçamento
+            // deixava o avançado com MENOS volume que o iniciante.
+            expect(volumeDoPeito("iniciante")).toBeLessThan(volumeDoPeito("intermediario"));
+            expect(volumeDoPeito("intermediario")).toBeLessThan(volumeDoPeito("avancado"));
+        });
+
+        it("dá aos grupos secundários menos volume direto que aos primários", () => {
+            const { treino } = engineService.calcular(perfilBase({ diasPorSemana: 4 }));
+            const upper = treino.sessoes.find((s) => s.nome === "Upper")!;
+
+            const primarios = upper.volume.filter((v) => v.papel === "primario");
+            const secundarios = upper.volume.filter((v) => v.papel === "secundario");
+
+            expect(secundarios.length).toBeGreaterThan(0);
+            expect(Math.max(...secundarios.map((v) => v.series))).toBeLessThan(
+                Math.min(...primarios.map((v) => v.series)),
+            );
+        });
+
+        it("divide o volume semanal pela frequência da sessão", () => {
+            // Upper 2x/semana com alvo 14: 7 séries por sessão, não 14.
+            const { treino } = engineService.calcular(
+                perfilBase({ diasPorSemana: 4, nivelExperiencia: "intermediario" }),
+            );
+            const upper = treino.sessoes.find((s) => s.nome === "Upper")!;
+
+            expect(upper.frequenciaSemanal).toBe(2);
+            expect(upper.volume.find((v) => v.grupo === "Peito")!.series).toBe(7);
+        });
+
+        it("nunca prescreve mais séries num grupo do que caberia em um exercício só, sem exceder o teto", () => {
+            const { treino } = engineService.calcular(
+                perfilBase({ diasPorSemana: 6, nivelExperiencia: "avancado" }),
+            );
+
+            for (const sessao of treino.sessoes) {
+                for (const item of sessao.volume) {
+                    const exercicios = Math.ceil(item.series / MAX_SERIES_POR_EXERCICIO);
+                    expect(exercicios).toBeGreaterThanOrEqual(1);
+                }
+            }
+        });
+    });
 
     // O modelo recebe a meta de cada refeição em vez do total do dia. Se as
     // partes não somarem o total, o plano fecha certo por refeição e errado no

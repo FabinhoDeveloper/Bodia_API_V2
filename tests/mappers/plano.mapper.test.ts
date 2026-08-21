@@ -5,6 +5,7 @@ import EngineService from "../../src/services/engine.service";
 import PlanoMapper from "../../src/mappers/plano.mapper";
 import PlanoSimuladoGenerator from "../../src/generators/plano-simulado.generator";
 import ValidadorMacros from "../../src/generators/validador-macros";
+import ValidadorVolume from "../../src/generators/validador-volume";
 
 const PERFIL = {
     sexo: "F" as const,
@@ -65,7 +66,7 @@ describe("PlanoMapper", () => {
 
 describe("PlanoSimuladoGenerator", () => {
     const engineService = new EngineService();
-    const simulado = new PlanoSimuladoGenerator(new ValidadorMacros());
+    const simulado = new PlanoSimuladoGenerator(new ValidadorMacros(), new ValidadorVolume());
 
     it("devolve o fixture sem chamar a IA", async () => {
         const resultado = engineService.calcular(PERFIL);

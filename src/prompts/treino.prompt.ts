@@ -1,4 +1,10 @@
 import { Exercicio } from "../data/exercicios";
+import {
+    MAX_EXERCICIOS_POR_SESSAO,
+    MAX_SERIES_POR_EXERCICIO,
+    MIN_EXERCICIOS_POR_SESSAO,
+    MIN_SERIES_POR_EXERCICIO,
+} from "../data/volume-treino";
 import { ResultadoCalculo } from "../types/perfil.types";
 import { PromptMontado } from "./prompt.types";
 
@@ -42,15 +48,20 @@ REGRAS INVIOLÁVEIS:
 
 ## Por que os números são o que são
 
-- SÉRIES POR GRUPO MUSCULAR NA SEMANA: existe relação dose-resposta entre volume semanal e hipertrofia (PELLAND et al., 2024). Cada grupo muscular deve ser treinado ao menos duas vezes por semana para hipertrofia superior a treinar uma vez só (SCHOENFELD; OGBORN; KRIEGER, 2016). O volume que você recebeu já considera o nível de experiência do usuário.
+- SÉRIES POR GRUPO MUSCULAR: existe relação dose-resposta entre volume semanal e hipertrofia (PELLAND et al., 2024). Cada grupo muscular deve ser treinado ao menos duas vezes por semana para hipertrofia superior a treinar uma vez só (SCHOENFELD; OGBORN; KRIEGER, 2016). O orçamento que você recebeu já considera o nível do usuário e a frequência de cada sessão.
 
-## LIMITES DE VOLUME (limites, não metas a atingir)
+## O ORÇAMENTO DE SÉRIES
 
-- Entre 4 e 7 exercícios por sessão. Nunca mais que 7.
-- Entre 2 e 5 séries por exercício. NUNCA mais que 5 séries no mesmo exercício.
-- O número de séries por grupo muscular na semana é um TOTAL a ser DISTRIBUÍDO, não o número de séries de um exercício. Ele se acumula somando todos os exercícios daquele grupo em todas as sessões da semana, considerando quantas vezes cada sessão se repete.
+Cada sessão vem com quantas séries cada grupo muscular deve receber NAQUELA sessão. O número já está dividido pela frequência semanal: NÃO divida, NÃO multiplique, NÃO redistribua.
 
-Exemplo de como distribuir: se a meta é 12 séries semanais de peito e a sessão que treina peito acontece 2 vezes por semana, então cada sessão precisa de 6 séries de peito — o que pode ser 2 exercícios de 3 séries, ou 3 exercícios de 2 séries. Nunca um único exercício de 12 séries.
+Seu trabalho é escolher exercícios que somem aquele número em cada grupo. Se o orçamento diz "Peito: 7 séries", pode ser um exercício de 4 séries mais um de 3. O que não pode é o total do grupo fechar diferente de 7.
+
+Grupo que não aparece no orçamento da sessão NÃO recebe exercício próprio.
+
+## LIMITES (limites, não metas a atingir)
+
+- Entre ${MIN_EXERCICIOS_POR_SESSAO} e ${MAX_EXERCICIOS_POR_SESSAO} exercícios por sessão. Nunca mais que ${MAX_EXERCICIOS_POR_SESSAO}.
+- Entre ${MIN_SERIES_POR_EXERCICIO} e ${MAX_SERIES_POR_EXERCICIO} séries por exercício. NUNCA mais que ${MAX_SERIES_POR_EXERCICIO} séries no mesmo exercício.
 
 ## Formato da resposta
 
@@ -74,9 +85,16 @@ Responda SOMENTE com um objeto json válido, sem texto antes ou depois e sem blo
         const { resultado, exercicios, restricoesFisicas } = contexto;
         const { metabolismo, meta, treino } = resultado;
 
-        const sessoes = treino.sessoes
-            .map((sessao) => `${sessao.nome} (${sessao.frequenciaSemanal}x por semana)`)
-            .join(", ");
+        const orcamento = treino.sessoes
+            .map((sessao) => {
+                const linhas = sessao.volume
+                    .map((item) => `${item.grupo}: ${item.series} séries`)
+                    .join("\n");
+                const total = sessao.volume.reduce((soma, item) => soma + item.series, 0);
+
+                return `## ${sessao.nome} (${sessao.frequenciaSemanal}x por semana)\n${linhas}\nTotal da sessão: ${total} séries`;
+            })
+            .join("\n\n");
 
         return `# Perfil do usuário
 
@@ -89,8 +107,10 @@ Restrições físicas declaradas: ${restricoesFisicas.length > 0 ? restricoesFis
 
 Divisão de treino: ${treino.split}
 Dias de treino por semana: ${treino.diasPorSemana}
-Sessões a montar: ${sessoes}
-Séries por grupo muscular por semana (total a distribuir entre exercícios e sessões): ${treino.seriesPorGrupoSemana}
+
+# Orçamento de séries por sessão (use exatamente estes números)
+
+${orcamento}
 
 # Exercícios disponíveis
 

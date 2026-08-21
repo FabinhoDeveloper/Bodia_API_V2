@@ -5,6 +5,7 @@ import { PlanoGerado, PlanoValidado } from "../types/plano.types";
 import DietaIaGenerator from "./dieta-ia.generator";
 import TreinoIaGenerator from "./treino-ia.generator";
 import ValidadorMacros from "./validador-macros";
+import ValidadorVolume from "./validador-volume";
 
 /**
  * Orquestra a geração do plano pela IA (chamado pelo PlanService, depois que o
@@ -33,17 +34,20 @@ export default class PlanoIaGenerator {
     private readonly dietaGenerator;
     private readonly treinoGenerator;
     private readonly validadorMacros;
+    private readonly validadorVolume;
 
     constructor(
         catalogoFilter: CatalogoFilter,
         dietaGenerator: DietaIaGenerator,
         treinoGenerator: TreinoIaGenerator,
         validadorMacros: ValidadorMacros,
+        validadorVolume: ValidadorVolume,
     ) {
         this.catalogoFilter = catalogoFilter;
         this.dietaGenerator = dietaGenerator;
         this.treinoGenerator = treinoGenerator;
         this.validadorMacros = validadorMacros;
+        this.validadorVolume = validadorVolume;
     }
 
     async gerar(perfil: PerfilParaPlano, resultado: ResultadoCalculo): Promise<PlanoValidado> {
@@ -65,8 +69,9 @@ export default class PlanoIaGenerator {
         // mais estreito do que o catálogo (a seleção da chamada 1, no caso da
         // dieta). O que falta é a aritmética.
         const validacao = this.validadorMacros.validar(plano, alimentos, resultado);
+        const validacaoVolume = this.validadorVolume.validar(plano, exercicios, resultado);
 
-        return { plano, validacao };
+        return { plano, validacao, validacaoVolume };
     }
 
     /**

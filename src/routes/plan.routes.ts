@@ -8,6 +8,7 @@ import PlanoIaGenerator from "../generators/plano-ia.generator";
 import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
+import ValidadorVolume from "../generators/validador-volume";
 import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PlanoMapper from "../mappers/plano.mapper";
 import CatalogoFilter from "../prompts/catalogo.filter";
@@ -35,11 +36,12 @@ function montarGeradorIa(): PlanoIaGenerator {
         new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
         new ValidadorMacros(),
+        new ValidadorVolume(),
     );
 }
 
 const geradorDePlano: GeradorDePlano = simularIa
-    ? new PlanoSimuladoGenerator(new ValidadorMacros())
+    ? new PlanoSimuladoGenerator(new ValidadorMacros(), new ValidadorVolume())
     : montarGeradorIa();
 
 console.log(`[onboarding] gerador de plano: ${simularIa ? "SIMULADO (fixture)" : "IA"}`);

@@ -1,5 +1,12 @@
 import ValidationError from "../errors/validation.error";
 import {
+    cabeNaSessao,
+    FRACAO_SECUNDARIO,
+    GRUPOS_POR_SESSAO,
+    MAX_SERIES_POR_GRUPO_SESSAO,
+    MIN_SERIES_POR_EXERCICIO,
+} from "../data/volume-treino";
+import {
     MetaRefeicao,
     NivelAtividade,
     NivelExperiencia,
@@ -7,6 +14,7 @@ import {
     PerfilInput,
     ResultadoCalculo,
     Sexo,
+    VolumeGrupo,
 } from "../types/perfil.types";
 
 interface Sessao {
@@ -248,7 +256,85 @@ export default class EngineService {
         const { split, sessoes } = EngineService.SPLIT_POR_DIAS[perfil.diasPorSemana];
         const seriesPorGrupoSemana = EngineService.SERIES_POR_GRUPO_SEMANA[perfil.nivelExperiencia];
 
-        return { diasPorSemana: perfil.diasPorSemana, split, sessoes, seriesPorGrupoSemana };
+        return {
+            diasPorSemana: perfil.diasPorSemana,
+            split,
+            sessoes: sessoes.map((sessao) => ({
+                ...sessao,
+                volume: this.orcarSessao(sessao, seriesPorGrupoSemana),
+            })),
+            seriesPorGrupoSemana,
+        };
+    }
+
+    /**
+     * O orçamento de séries de UMA sessão, por grupo muscular — já dividido pela
+     * frequência semanal, para o LLM não ter divisão nenhuma a fazer.
+     *
+     * Antes, o motor entregava só o total semanal e o prompt mandava "distribua".
+     * Isso não fechava: aplicado a todos os 7 grupos de um Upper, o total exigia
+     * 14 exercícios num limite de 7. O modelo então fazia algo arbitrário.
+     *
+     * Agora a viabilidade é garantida por CONSTRUÇÃO: depois de montar o
+     * orçamento, `aparar` reduz o volume até ele caber nos limites da sessão.
+     */
+    private orcarSessao(sessao: Sessao, seriesPorGrupoSemana: number): VolumeGrupo[] {
+        const grupos = GRUPOS_POR_SESSAO[sessao.nome];
+
+        // Split sem tabela de grupos: sem orçamento, e o prompt cai no texto
+        // genérico. Não inventa alocação para um split que ninguém revisou.
+        if (!grupos) return [];
+
+        // A frequência entra aqui: um grupo treinado 2x por semana recebe metade
+        // do volume semanal em cada sessão. O teto por sessão impede que um
+        // split de baixa frequência empilhe a semana inteira num treino só.
+        const porSessao = (semanal: number) =>
+            Math.min(
+                Math.max(Math.round(semanal / sessao.frequenciaSemanal), MIN_SERIES_POR_EXERCICIO),
+                MAX_SERIES_POR_GRUPO_SESSAO,
+            );
+
+        const volume: VolumeGrupo[] = [
+            ...grupos.primario.map((grupo) => ({
+                grupo,
+                series: porSessao(seriesPorGrupoSemana),
+                papel: "primario" as const,
+            })),
+            ...grupos.secundario.map((grupo) => ({
+                grupo,
+                series: porSessao(seriesPorGrupoSemana * FRACAO_SECUNDARIO),
+                papel: "secundario" as const,
+            })),
+        ];
+
+        return this.aparar(volume);
+    }
+
+    /**
+     * Reduz o orçamento até ele caber no limite de exercícios da sessão.
+     *
+     * Apara o secundário primeiro, e só depois o primário: se algo tem de ceder,
+     * cede o volume direto dos grupos pequenos — que ainda recebem estímulo
+     * indireto dos compostos — antes do volume dos grandes, que é o que a
+     * dose-resposta de hipertrofia mede.
+     */
+    private aparar(volume: VolumeGrupo[]): VolumeGrupo[] {
+        const atual = volume.map((item) => ({ ...item }));
+
+        for (const papel of ["secundario", "primario"] as const) {
+            // Uma série por vez, sempre do grupo mais volumoso daquele papel:
+            // assim a redução distribui em vez de zerar um grupo só.
+            while (!cabeNaSessao(atual)) {
+                const candidatos = atual.filter(
+                    (item) => item.papel === papel && item.series > MIN_SERIES_POR_EXERCICIO,
+                );
+                if (candidatos.length === 0) break;
+
+                candidatos.sort((a, b) => b.series - a.series)[0].series -= 1;
+            }
+        }
+
+        return atual;
     }
 
     /**

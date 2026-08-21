@@ -78,9 +78,40 @@ export interface Validacao {
     dentroDoLimite: boolean;
 }
 
+/** Desvio de UM grupo muscular: o que foi prescrito contra o que a IA montou. */
+export interface DesvioGrupo {
+    grupo: string;
+    /** Séries por sessão que o orçamento pediu. */
+    prescrito: number;
+    /** Séries por sessão que os exercícios escolhidos somam. */
+    obtido: number;
+    desvioSeries: number;
+}
+
+/** Conferência do volume de UMA sessão. */
+export interface ValidacaoSessao {
+    sessao: string;
+    grupos: DesvioGrupo[];
+    /** Exercícios além do orçamento, em grupo que não foi prescrito. */
+    gruposForaDoOrcamento: string[];
+    quantidadeExercicios: number;
+    dentroDoLimite: boolean;
+}
+
+export interface ValidacaoVolume {
+    sessoes: ValidacaoSessao[];
+    dentroDoLimite: boolean;
+}
+
 export interface PlanoValidado {
     plano: PlanoGerado;
     validacao: Validacao;
+    /**
+     * Conferência do volume de treino. Existe pela mesma razão que `validacao`:
+     * o número que a IA devolveu nunca é aceito na palavra dela. Até então a
+     * dieta tinha validador e o treino não tinha nenhum.
+     */
+    validacaoVolume: ValidacaoVolume;
 }
 
 // ---------------------------------------------------------------------------

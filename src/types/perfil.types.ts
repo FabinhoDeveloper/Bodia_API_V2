@@ -48,6 +48,16 @@ export interface MetaRefeicao {
     gordura: number;
 }
 
+/** Papel do grupo dentro da sessão — define quanto volume direto ele recebe. */
+export type PapelGrupo = "primario" | "secundario";
+
+/** Uma linha do orçamento de treino: quantas séries daquele grupo, na sessão. */
+export interface VolumeGrupo {
+    grupo: string;
+    series: number;
+    papel: PapelGrupo;
+}
+
 export interface ResultadoCalculo {
     metabolismo: {
         idade: number;
@@ -69,7 +79,17 @@ export interface ResultadoCalculo {
     treino: {
         diasPorSemana: number;
         split: string;
-        sessoes: { nome: string; frequenciaSemanal: number }[];
+        sessoes: {
+            nome: string;
+            frequenciaSemanal: number;
+            /**
+             * O orçamento de séries por grupo NESTA sessão, já dividido pela
+             * frequência semanal. Vazio quando o split não tem tabela de grupos
+             * revisada — ver services/volume-treino.ts.
+             */
+            volume: VolumeGrupo[];
+        }[];
+        /** O alvo semanal que originou o orçamento; é o que o validador confere. */
         seriesPorGrupoSemana: number;
     };
     dieta: {

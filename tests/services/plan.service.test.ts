@@ -54,6 +54,8 @@ const PLANO_FAKE: PlanoValidado = {
         gordura: { meta: 48, obtido: 48, desvioPercentual: 0 },
         dentroDoLimite: true,
     },
+    // O treino do fake não tem orçamento a conferir.
+    validacaoVolume: { sessoes: [], dentroDoLimite: true },
 };
 
 // A IA nunca é chamada de verdade nos testes: gastaria crédito e deixaria a suíte

@@ -10,6 +10,7 @@ import DietaIaGenerator from "../generators/dieta-ia.generator";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
+import ValidadorVolume from "../generators/validador-volume";
 import DietaQuantidadesPrompt from "../prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../prompts/treino.prompt";
@@ -32,6 +33,7 @@ const benchmarkController = new BenchmarkController(
             new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
             new TreinoIaGenerator(new TreinoPrompt(), aiService),
             new ValidadorMacros(),
+            new ValidadorVolume(),
         ),
         iaModel,
     ),
