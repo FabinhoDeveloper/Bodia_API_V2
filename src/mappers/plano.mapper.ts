@@ -1,5 +1,6 @@
 import { ALIMENTOS } from "../data/alimentos";
 import { EXERCICIOS } from "../data/exercicios";
+import { DESCANSO_UNIARTICULAR_S, descansoPara } from "../data/descanso-treino";
 import { ResultadoCalculo } from "../types/perfil.types";
 import {
     PlanoDTO,
@@ -27,8 +28,6 @@ const HORARIO_POR_REFEICAO: Record<string, string> = {
     Ceia: "22:00",
 };
 
-const META_AGUA_ML = 2000;
-
 /**
  * Converte o plano cru (o que o LLM devolve, ou o fixture simulado) no formato
  * que o app consome, juntando três fontes: a seleção de itens, os números do
@@ -45,7 +44,7 @@ export default class PlanoMapper {
                 proteinaG: resultado.macros.proteina.g,
                 carboidratoG: resultado.macros.carboidrato.g,
                 gorduraG: resultado.macros.gordura.g,
-                aguaMl: META_AGUA_ML,
+                aguaMl: resultado.dieta.metaAguaMl,
             },
             treino: {
                 split: resultado.treino.split,
@@ -74,7 +73,12 @@ export default class PlanoMapper {
                     grupoMuscular: doCatalogo?.grupoMuscular ?? "",
                     series: exercicio.series,
                     repeticoes: exercicio.repeticoes,
-                    descansoSegundos: 60,
+                    // Derivado do tipo de exercício, não fixo: multiarticular
+                    // descansa mais que uniarticular (ACSM, 2009). Alimenta a
+                    // tela de revisão E o cronômetro entre séries do app.
+                    descansoSegundos: doCatalogo
+                        ? descansoPara(doCatalogo)
+                        : DESCANSO_UNIARTICULAR_S,
                 };
             });
 

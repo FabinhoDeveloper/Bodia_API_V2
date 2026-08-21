@@ -279,6 +279,34 @@ describe("EngineService", () => {
         });
     });
 
+    // Antes a meta de água era constante no plano.mapper: 2000 ml para todo
+    // mundo, sem passar pelo motor.
+    describe("meta de hidratação", () => {
+        it("entra no resultado do cálculo", () => {
+            const { dieta } = engineService.calcular(perfilBase());
+
+            expect(dieta.metaAguaMl).toBeGreaterThan(0);
+        });
+
+        it("difere entre perfis de peso diferente", () => {
+            const leve = engineService.calcular(perfilBase({ peso: 55 })).dieta.metaAguaMl;
+            const pesado = engineService.calcular(perfilBase({ peso: 100 })).dieta.metaAguaMl;
+
+            expect(pesado).toBeGreaterThan(leve);
+        });
+
+        it("difere entre níveis de atividade", () => {
+            const sedentario = engineService.calcular(
+                perfilBase({ peso: 90, nivelAtividade: "sedentario" }),
+            ).dieta.metaAguaMl;
+            const atleta = engineService.calcular(
+                perfilBase({ peso: 90, nivelAtividade: "atleta" }),
+            ).dieta.metaAguaMl;
+
+            expect(atleta).toBeGreaterThan(sedentario);
+        });
+    });
+
     // O modelo recebe a meta de cada refeição em vez do total do dia. Se as
     // partes não somarem o total, o plano fecha certo por refeição e errado no
     // dia — por isso a soma é verificada nos quatro cenários.

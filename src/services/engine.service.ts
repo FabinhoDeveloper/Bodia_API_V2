@@ -1,3 +1,4 @@
+import { metaAguaMl } from "../data/hidratacao";
 import ValidationError from "../errors/validation.error";
 import {
     cabeNaSessao,
@@ -376,6 +377,10 @@ export default class EngineService {
             return porcao;
         });
 
-        return { numeroRefeicoes, refeicoes };
+        return {
+            numeroRefeicoes,
+            refeicoes,
+            metaAguaMl: metaAguaMl(perfil.peso, perfil.sexo, perfil.nivelAtividade),
+        };
     }
 }

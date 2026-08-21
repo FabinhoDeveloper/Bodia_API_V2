@@ -1,5 +1,6 @@
 import { ALIMENTOS } from "../../src/data/alimentos";
 import { EXERCICIOS } from "../../src/data/exercicios";
+import { descansoPara } from "../../src/data/descanso-treino";
 import { PLANO_SIMULADO } from "../../src/data/plano-simulado";
 import EngineService from "../../src/services/engine.service";
 import PlanoMapper from "../../src/mappers/plano.mapper";
@@ -55,6 +56,30 @@ describe("PlanoMapper", () => {
     it("acrescenta dia da semana e horário, que a tela precisa", () => {
         dto.treino.sessoes.forEach((sessao) => expect(sessao.diasSemana.length).toBeGreaterThan(0));
         dto.dieta.refeicoes.forEach((refeicao) => expect(refeicao.horario).toBeTruthy());
+    });
+
+    // Antes o mapper gravava META_AGUA_ML = 2000 para todo usuário.
+    it("usa a meta de água do EngineService, não uma constante", () => {
+        expect(dto.metas.aguaMl).toBe(resultado.dieta.metaAguaMl);
+
+        const outro = engineService.calcular(perfil({ peso: 100 }));
+        const outroDto = mapper.montar(PLANO_SIMULADO, outro);
+
+        expect(outroDto.metas.aguaMl).not.toBe(dto.metas.aguaMl);
+    });
+
+    // Antes o mapper gravava descansoSegundos: 60 para todo exercício, incluindo
+    // o cronômetro entre séries que o app usa durante o treino.
+    it("prescreve descansos diferentes conforme o tipo do exercício", () => {
+        const exercicios = dto.treino.sessoes.flatMap((s) => s.exercicios);
+        const valores = new Set(exercicios.map((e) => e.descansoSegundos));
+
+        expect(valores.size).toBeGreaterThan(1);
+
+        for (const exercicio of exercicios) {
+            const noCatalogo = EXERCICIOS.find((e) => e.id === exercicio.exercicioId)!;
+            expect(exercicio.descansoSegundos).toBe(descansoPara(noCatalogo));
+        }
     });
 
     it("busca grupo muscular no catálogo em vez de confiar no plano", () => {

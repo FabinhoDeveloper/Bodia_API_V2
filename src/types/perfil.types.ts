@@ -94,6 +94,8 @@ export interface ResultadoCalculo {
     };
     dieta: {
         numeroRefeicoes: number;
+        /** Meta diária de água BEBIDA, em ml — ver data/hidratacao.ts. */
+        metaAguaMl: number;
         refeicoes: MetaRefeicao[];
     };
 }
