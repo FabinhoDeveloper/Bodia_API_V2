@@ -17,7 +17,7 @@ function planoDTO(overrides: Partial<PlanoDTO> = {}): PlanoDTO {
             sessoes: [
                 {
                     nome: "Upper",
-                    dia: "Segunda",
+                    diasSemana: ["Segunda", "Quinta"],
                     gruposMusculares: "Peito",
                     exercicios: [
                         {

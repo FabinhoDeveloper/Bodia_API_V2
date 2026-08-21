@@ -51,7 +51,7 @@ export default class MeuPlanoMapper {
                     return {
                         id: sessao.id,
                         nome: sessao.nome,
-                        diaSemana: sessao.diaSemana,
+                        diasSemana: sessao.diasSemana,
                         // Derivado dos exercícios, sem repetir — é o subtítulo do
                         // card. Não é coluna no banco justamente para não poder
                         // contradizer a lista.

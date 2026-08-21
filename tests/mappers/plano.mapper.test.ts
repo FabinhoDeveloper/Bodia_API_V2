@@ -20,9 +20,27 @@ const PERFIL = {
     numeroRefeicoes: 4,
 };
 
+const perfil = (overrides: Partial<typeof PERFIL> = {}) => ({ ...PERFIL, ...overrides });
+
 describe("PlanoMapper", () => {
     const engineService = new EngineService();
     const mapper = new PlanoMapper();
+
+    /**
+     * Monta o DTO usando as SESSÕES DO MOTOR como se a IA as tivesse devolvido.
+     * O fixture tem sempre 2 sessões, então não serviria para testar splits de
+     * 3, 5 ou 6 dias — que é justamente onde a repartição dos dias importa.
+     */
+    const montarDto = (resultado: ReturnType<EngineService["calcular"]>) =>
+        mapper.montar(
+            {
+                ...PLANO_SIMULADO,
+                treino: {
+                    sessoes: resultado.treino.sessoes.map((s) => ({ nome: s.nome, exercicios: [] })),
+                },
+            },
+            resultado,
+        );
     const resultado = engineService.calcular(PERFIL);
     const dto = mapper.montar(PLANO_SIMULADO, resultado);
 
@@ -35,7 +53,7 @@ describe("PlanoMapper", () => {
 
     // A tela mostra dia e horário, que não existem nem no plano nem no cálculo.
     it("acrescenta dia da semana e horário, que a tela precisa", () => {
-        dto.treino.sessoes.forEach((sessao) => expect(sessao.dia).toBeTruthy());
+        dto.treino.sessoes.forEach((sessao) => expect(sessao.diasSemana.length).toBeGreaterThan(0));
         dto.dieta.refeicoes.forEach((refeicao) => expect(refeicao.horario).toBeTruthy());
     });
 
@@ -62,6 +80,41 @@ describe("PlanoMapper", () => {
             expect(new Set(grupos).size).toBe(grupos.length);
         });
     });
+
+    /**
+     * A regressão: `dia: dias[indice]` dava um dia por sessão. Com 4 dias em
+     * Upper/Lower (2 sessões, 2x cada), só Segunda e Terça eram usados —
+     * Quinta e Sexta sumiam, e quem pedia 4 dias de treino via 2 na tela.
+     */
+    describe("distribuição dos dias da semana", () => {
+        it.each([2, 3, 4, 5, 6])("usa todos os %i dias pedidos, sem descartar nenhum", (dias) => {
+            const resultado = new EngineService().calcular(perfil({ diasPorSemana: dias }));
+            const dto = montarDto(resultado);
+
+            const usados = dto.treino.sessoes.flatMap((s) => s.diasSemana);
+
+            expect(usados).toHaveLength(dias);
+            expect(new Set(usados).size).toBe(dias);
+        });
+
+        it("respeita a frequência semanal de cada sessão", () => {
+            const resultado = new EngineService().calcular(perfil({ diasPorSemana: 4 }));
+            const dto = montarDto(resultado);
+
+            for (const sessao of dto.treino.sessoes) {
+                const prescrita = resultado.treino.sessoes.find((s) => s.nome === sessao.nome)!;
+                expect(sessao.diasSemana).toHaveLength(prescrita.frequenciaSemanal);
+            }
+        });
+
+        it("espaça as repetições em vez de agrupá-las em dias seguidos", () => {
+            const resultado = new EngineService().calcular(perfil({ diasPorSemana: 4 }));
+            const dto = montarDto(resultado);
+            const upper = dto.treino.sessoes.find((s) => s.nome === "Upper")!;
+
+            // Segunda + Quinta, e não Segunda + Terça.
+            expect(upper.diasSemana).toEqual(["Segunda", "Quinta"]);
+        });
 });
 
 describe("PlanoSimuladoGenerator", () => {
@@ -105,5 +158,7 @@ describe("PlanoSimuladoGenerator", () => {
 
         expect(validacao.calorias.meta).toBe(resultado.meta.caloriasAlvo);
         expect(validacao.calorias.obtido).toBeGreaterThan(0);
+    });
+
     });
 });

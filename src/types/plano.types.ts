@@ -143,7 +143,16 @@ export interface ExercicioDTO {
 
 export interface SessaoTreinoDTO {
     nome: string;
-    dia: string;
+    /**
+     * Todos os dias em que esta sessão acontece — Upper 2x/semana vira
+     * ["Segunda", "Quinta"].
+     *
+     * É lista, e não um dia só, porque a prescrição continua sendo UMA sessão
+     * repetida. Duplicar a sessão para ter um dia em cada gravaria duas linhas
+     * de SessaoTreino no banco e deixaria ambíguo qual das duas o usuário
+     * registrou ao treinar.
+     */
+    diasSemana: string[];
     gruposMusculares: string;
     exercicios: ExercicioDTO[];
 }
@@ -186,7 +195,7 @@ export interface MeuPlano {
         sessoes: {
             id: string;
             nome: string;
-            diaSemana: string;
+            diasSemana: string[];
             gruposMusculares: string;
             exercicios: {
                 id: string;

@@ -87,7 +87,7 @@ export default class UserRepository {
                             sessoes: {
                                 create: plano.treino.sessoes.map((sessao, indice) => ({
                                     nome: sessao.nome,
-                                    diaSemana: sessao.dia,
+                                    diasSemana: sessao.diasSemana,
                                     frequenciaSemanal: frequenciaPorSessao.get(sessao.nome) ?? 1,
                                     ordem: indice,
                                     exercicios: {

@@ -186,9 +186,13 @@ model SessaoTreino {
   id                String @id @default(uuid())
   fichaTreinoId     String
   nome              String
-  /// Dia sugerido ("Segunda"). É apresentação, mas fica no banco para o app
-  /// não precisar recalcular a distribuição da semana.
-  diaSemana         String
+  /// Dias em que a sessão acontece ("Segunda", "Quinta"). É apresentação, mas
+  /// fica no banco para o app não precisar recalcular a distribuição da semana.
+  ///
+  /// É LISTA porque uma sessão pode se repetir: Upper num split de 4 dias
+  /// acontece 2x. Antes era um dia só, e a segunda ocorrência simplesmente
+  /// sumia — quem pedia 4 dias de treino via 2 na tela.
+  diasSemana        String[]
   /// Quantas vezes esta sessão se repete na semana.
   frequenciaSemanal Int
   ordem             Int

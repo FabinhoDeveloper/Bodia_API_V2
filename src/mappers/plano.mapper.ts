@@ -61,6 +61,7 @@ export default class PlanoMapper {
 
     private montarSessoes(plano: PlanoGerado, resultado: ResultadoCalculo): SessaoTreinoDTO[] {
         const dias = DIAS_POR_QUANTIDADE[resultado.treino.diasPorSemana] ?? [];
+        const diasPorSessao = this.repartirDias(dias, resultado.treino.sessoes);
         const porId = new Map(EXERCICIOS.map((e) => [e.id, e]));
 
         return plano.treino.sessoes.map((sessao, indice) => {
@@ -85,11 +86,48 @@ export default class PlanoMapper {
 
             return {
                 nome: sessao.nome,
-                dia: dias[indice % Math.max(dias.length, 1)] ?? "",
+                diasSemana: diasPorSessao[indice] ?? [],
                 gruposMusculares,
                 exercicios,
             };
         });
+    }
+
+    /**
+     * Reparte os dias da semana entre as sessões, respeitando a frequência de
+     * cada uma.
+     *
+     * Antes era `dias[indice]`, uma sessão por dia — e com 4 dias em Upper/Lower
+     * (2 sessões, 2x cada) só Segunda e Terça eram usados: Quinta e Sexta
+     * sumiam. O usuário pedia 4 dias de treino e o app mostrava 2.
+     *
+     * Distribui em rodadas, não em blocos: Upper fica com Segunda e Quinta, e
+     * não com Segunda e Terça. Treinar o mesmo grupo em dias consecutivos e
+     * depois folgar não é o que a frequência semanal pretende.
+     */
+    private repartirDias(
+        dias: string[],
+        sessoes: ResultadoCalculo["treino"]["sessoes"],
+    ): string[][] {
+        const porSessao: string[][] = sessoes.map(() => []);
+        const restante = sessoes.map((sessao) => sessao.frequenciaSemanal);
+
+        let indice = 0;
+        for (const dia of dias) {
+            // Procura a próxima sessão que ainda tem repetição a cumprir.
+            for (let tentativa = 0; tentativa < sessoes.length; tentativa++) {
+                const alvo = (indice + tentativa) % sessoes.length;
+
+                if (restante[alvo] > 0) {
+                    porSessao[alvo].push(dia);
+                    restante[alvo] -= 1;
+                    indice = alvo + 1;
+                    break;
+                }
+            }
+        }
+
+        return porSessao;
     }
 
     private montarRefeicoes(plano: PlanoGerado, resultado: ResultadoCalculo): RefeicaoDTO[] {
