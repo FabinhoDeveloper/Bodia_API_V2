@@ -1,11 +1,21 @@
 import OpenAI from "openai";
 
 /**
+ * Parâmetros que variam com a família do modelo — um modelo de chat leva
+ * `temperature`/`max_tokens`, um de raciocínio leva `max_completion_tokens` e
+ * `reasoning_effort`. Quem decide é `config/ia.ts`; aqui só se recebe o objeto
+ * pronto e se espalha na chamada.
+ */
+export type ParametrosIa = Record<string, unknown>;
+
+/**
  * Cliente de IA do BodIA: fala com o provider configurado em src/config/ia.ts
  * (hoje OpenAI, gpt-4o-mini) através do SDK da OpenAI.
  *
- * Não sabe QUAL provider está atrás: recebe cliente, modelo e timeout por
- * construtor. É o que permitiu trocar de provider três vezes sem tocar aqui.
+ * Não sabe QUAL provider nem QUAL modelo está atrás: recebe cliente, modelo,
+ * timeout e os parâmetros da chamada por construtor. É o que permitiu trocar de
+ * provider três vezes sem tocar aqui — e o motivo de a distinção entre modelo
+ * de chat e de raciocínio não ser feita nesta classe.
  *
  * Não conhece treino, dieta nem nenhuma regra de negócio — só manda mensagem e
  * devolve texto (enviarMensagem) ou JSON (gerarJson). Todo o conteúdo enviado
@@ -15,13 +25,20 @@ export default class AiService {
     private readonly criarClient;
     private readonly model;
     private readonly timeoutMs;
+    private readonly parametros;
 
     // Recebe uma função em vez do cliente pronto: o SDK exige a credencial já na
     // construção, então o cliente só é criado quando a IA é de fato usada.
-    constructor(criarClient: () => OpenAI, model: string, timeoutMs: number) {
+    constructor(
+        criarClient: () => OpenAI,
+        model: string,
+        timeoutMs: number,
+        parametros: ParametrosIa,
+    ) {
         this.criarClient = criarClient;
         this.model = model;
         this.timeoutMs = timeoutMs;
+        this.parametros = parametros;
     }
 
     async enviarMensagem(mensagem: string): Promise<string> {
@@ -36,6 +53,10 @@ export default class AiService {
     /**
      * Um único lugar com os parâmetros da chamada — as três etapas da geração
      * passam por aqui, então nenhuma pode divergir das outras por descuido.
+     *
+     * O que varia com a família do modelo (`temperature`/`max_tokens` contra
+     * `max_completion_tokens`/`reasoning_effort`) vem pronto de `config/ia.ts`:
+     * ver o comentário de `iaParametros` lá para o porquê de cada valor.
      */
     private async criarChatCompletion(system: string, user: string) {
         return this.criarClient().chat.completions.create(
@@ -46,14 +67,7 @@ export default class AiService {
                     { role: "user", content: user },
                 ],
                 response_format: { type: "json_object" },
-                temperature: 0.2,
-                // 8192 basta porque cada chamada faz UMA coisa: escolher
-                // alimentos, calcular gramas de uma lista curta, ou montar o
-                // treino. O teto anterior era 32000 por causa dos
-                // reasoning_tokens da DeepSeek, que contavam dentro do limite.
-                // Um modelo de chat não tem esse consumo, e o antigo valor só
-                // escondia resposta grande demais em vez de barrá-la.
-                max_tokens: 8192,
+                ...this.parametros,
             },
             // O `timeout` do cliente não basta: o SDK o cancela quando chegam os
             // cabeçalhos, e a geração acontece depois disso. Este sinal continua
@@ -63,9 +77,10 @@ export default class AiService {
     }
 
     /**
-     * Geração em JSON mode. A temperatura é baixa de propósito: a fundamentação
-     * teórica (4.2.3) trata a estocasticidade do LLM como problema em aplicações
-     * que exigem resultados reprodutíveis e auditáveis.
+     * Geração em JSON mode. Num modelo de chat a temperatura é baixa de
+     * propósito: a fundamentação teórica (4.2.3) trata a estocasticidade do LLM
+     * como problema em aplicações que exigem resultados reprodutíveis e
+     * auditáveis.
      *
      * `etapa` identifica qual das chamadas está em curso ("dieta:seleção",
      * "dieta:quantidades", "treino"). Sem ela o console mostra blocos idênticos
@@ -79,8 +94,21 @@ export default class AiService {
         );
 
         const inicio = Date.now();
+        let resposta;
 
-        const resposta = await this.criarChatCompletion(system, user);
+        // O bloco de sucesso já registra tempo e tokens; sem este catch, uma
+        // chamada que estoura o teto não deixa rastro nenhum — a etapa some do
+        // console e só sobra o erro lá em cima, sem dizer qual delas morreu nem
+        // em quanto tempo. Com dieta e treino em paralelo, essa é a diferença
+        // entre saber e ter de subtrair tempos na mão.
+        try {
+            resposta = await this.criarChatCompletion(system, user);
+        } catch (erro) {
+            const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
+            const motivo = erro instanceof Error ? `${erro.constructor.name}: ${erro.message}` : String(erro);
+            console.log(`[ia:${etapa}] FALHOU em ${segundos}s — ${motivo}`);
+            throw erro;
+        }
 
         const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
         const uso = resposta.usage;

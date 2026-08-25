@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { getIaClient, iaModel, iaTimeoutMs, simularIa } from "../config/ia";
+import { getIaClient, iaModel, iaParametros, iaTimeoutMs, simularIa } from "../config/ia";
 import prismaClient from "../config/prisma";
 import PlanController from "../controllers/plan.controller";
 import DietaIaGenerator from "../generators/dieta-ia.generator";
@@ -29,7 +29,7 @@ const router = Router();
 function montarGeradorIa(): PlanoIaGenerator {
     // Um AiService só, compartilhado pelas três chamadas: mesmo cliente, mesmo
     // modelo, mesmos parâmetros. Duas instâncias poderiam divergir sem aviso.
-    const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs);
+    const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs, iaParametros);
 
     return new PlanoIaGenerator(
         new CatalogoFilter(),

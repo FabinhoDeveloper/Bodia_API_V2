@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { getIaClient, iaModel, iaTimeoutMs } from "../config/ia";
+import { getIaClient, iaModel, iaParametros, iaTimeoutMs } from "../config/ia";
 import BenchmarkController from "./benchmark.controller";
 import BenchmarkService from "./benchmark.service";
 import EngineService from "../services/engine.service";
@@ -23,7 +23,7 @@ import TreinoPrompt from "../prompts/treino.prompt";
 // que o objetivo é medir a chamada real, não a fixture.
 const router = Router();
 
-const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs);
+const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs, iaParametros);
 
 const benchmarkController = new BenchmarkController(
     new BenchmarkService(
