@@ -17,10 +17,10 @@ export interface ContextoQuantidades {
  * CHAMADA 2 da dieta: quantas gramas de cada alimento já escolhido.
  *
  * A diferença que faz esta chamada funcionar é o TAMANHO do espaço de busca.
- * Antes, o modelo escolhia gramas entre 591 alimentos enquanto ainda decidia
- * quais usar — o comentário de reasoning_effort no ai.service registrou o
- * resultado: raciocínio estourando o teto de tokens e resposta vazia depois de
- * 328 segundos.
+ * Antes, o modelo escolhia gramas entre os 284 alimentos do catálogo enquanto
+ * decidia quais usar, e o resultado está registrado no comentário de
+ * `iaTimeoutMs` em config/ia.ts: raciocínio estourando o teto de tokens e
+ * resposta vazia depois de 328 segundos.
  *
  * Aqui ele recebe 3 a 5 alimentos por refeição, todos já definidos, e só
  * precisa dosar. É aritmética simples sobre um punhado de números.

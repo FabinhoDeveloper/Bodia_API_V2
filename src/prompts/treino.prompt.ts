@@ -19,7 +19,7 @@ export interface ContextoTreino {
  * as duas em paralelo.
  *
  * Separá-la da dieta não foi só organização: antes, o mesmo prompt carregava os
- * 591 alimentos da TACO junto com os exercícios, e o modelo alternava entre
+ * 284 alimentos da TACO junto com os exercícios, e o modelo alternava entre
  * dosar gramas e distribuir séries na mesma resposta. Aqui o contexto tem só o
  * que diz respeito a treino.
  */

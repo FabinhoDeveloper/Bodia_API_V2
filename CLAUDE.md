@@ -14,7 +14,7 @@ Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** —
 - **cors**, **dotenv** — infraestrutura básica de app
 - **Jest** (`ts-jest`) — testes
 - **supertest** — testes de rota (`tests/app.smoke.test.ts`)
-- **`openai` SDK** — hoje na **OpenAI** (`gpt-4o-mini`). O provider é configurável (`IA_BASE_URL`): DeepSeek e Gemini expõem endpoints compatíveis com Chat Completions, então o mesmo SDK serve os três
+- **`openai` SDK** — hoje na **OpenAI**, modelo padrão `gpt-4o-mini` (`IA_MODEL`). O provider é configurável (`IA_BASE_URL`): DeepSeek e Gemini expõem endpoints compatíveis com Chat Completions, então o mesmo SDK serve os três
 
 ## Arquitetura em camadas
 
@@ -386,7 +386,7 @@ Quem encadeia é `plano-ia.generator.ts`; quem o chama é `plan.service.gerar()`
 
 ### Por que três chamadas, e não uma
 
-A versão anterior pedia ao modelo, na mesma resposta, escolher alimentos, dosar gramas até fechar quatro macros e montar o treino. Levava 2–3 min, falhava com frequência e produzia café da manhã com filé de merluza. O comentário de `reasoning_effort` que existia no `ai.service` já dizia onde estava o problema: *"a dificuldade aritmética da tarefa (encaixar gramas de 591 alimentos até fechar 4 macros ao mesmo tempo)"*.
+A versão anterior pedia ao modelo, na mesma resposta, escolher alimentos, dosar gramas até fechar quatro macros e montar o treino. Levava 2–3 min, falhava com frequência e produzia café da manhã com filé de merluza. O comentário de `reasoning_effort` que existia no `ai.service` já dizia onde estava o problema: *"a dificuldade aritmética da tarefa (encaixar gramas de centenas de alimentos até fechar 4 macros ao mesmo tempo)"*.
 
 Cada chamada agora faz uma coisa só:
 
@@ -396,7 +396,7 @@ Cada chamada agora faz uma coisa só:
 | `dieta:quantidades` | dosa em gramas **só os alimentos escolhidos** na etapa anterior | ~3,8k caracteres |
 | `treino` | monta o treino. Não conhece a dieta. | ~7,8k caracteres |
 
-**O ganho não é prompt menor no total** — a soma é parecida com a de antes, porque a seleção ainda carrega o catálogo inteiro. O ganho é que a etapa **difícil** encolheu: a aritmética que estourava o raciocínio agora acontece sobre 3 a 5 alimentos por refeição em vez de 591.
+**O ganho não é prompt menor no total** — a soma é parecida com a de antes, porque a seleção ainda carrega o catálogo inteiro. O ganho é que a etapa **difícil** encolheu: a aritmética que estourava o raciocínio agora acontece sobre 3 a 5 alimentos por refeição em vez dos 284 do catálogo.
 
 Se a latência ainda incomodar, é a chamada 1 que precisa encolher — e o caminho é classificar a TACO por refeição e filtrar por código, como o `catalogo.filter` já faz com as restrições.
 
@@ -406,7 +406,7 @@ Se a latência ainda incomodar, é a chamada 1 que precisa encolher — e o cami
 
 ### Catálogos (`src/data/`)
 
-- `alimentos.ts` — 591 itens da TACO (NEPA/UNICAMP), macros por 100 g. **Arquivo gerado**: nunca editar à mão, rodar `npx tsx scripts/importar-taco.ts`. O script fica versionado para documentar a procedência dos dados.
+- `alimentos.ts` — 284 itens da TACO (NEPA/UNICAMP), macros por 100 g. **Arquivo gerado**: nunca editar à mão, rodar `npx tsx scripts/importar-taco.ts`. O script fica versionado para documentar a procedência dos dados.
 - `exercicios.ts` — 100 exercícios escritos à mão. `sessoes` usa os mesmos nomes que `EngineService.SPLIT_POR_DIAS` gera; `articulacoes` casa com os chips de restrição física do app.
 
 Os `id` são estáveis e servirão de chave estrangeira quando as fichas forem persistidas.
@@ -473,15 +473,28 @@ Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta 
 
 O parâmetro **`etapa`** não é enfeite: com três chamadas, sem ele o console imprime blocos idênticos e não dá para saber qual etapa está lenta ou falhou. Os logs saem como `[ia:dieta:seleção]`, `[ia:dieta:quantidades]`, `[ia:treino]`, com tempo e tokens de cada uma.
 
-`max_tokens: 8192` — o teto anterior era 32000 por causa dos `reasoning_tokens` da DeepSeek, que contavam dentro do limite. Cada chamada agora produz uma resposta pequena.
+`max_tokens: 8192` — o teto anterior era 32000 por causa dos `reasoning_tokens` da DeepSeek, que contavam dentro do limite. Cada chamada agora produz uma resposta pequena. (Num modelo de raciocínio o problema volta, e por isso o teto dele é maior — ver a tabela abaixo.)
+
+Além do sucesso, **a falha também é registrada**: `[ia:<etapa>] FALHOU em Xs — <erro>`. Sem isso uma chamada que estoura o teto não deixa rastro nenhum, e com dieta e treino em paralelo não dá para saber qual das três morreu sem subtrair tempos na mão.
 
 Configuração em `src/config/ia.ts` (`IA_API_KEY`, `IA_MODEL`, `IA_BASE_URL`, `SIMULAR_IA`). Sem a chave o servidor sobe normal e só as rotas de IA falham — é o motivo de o cliente ser criado por **factory**, e não no boot.
 
 **`IA_BASE_URL` vazio significa OpenAI** (o SDK usa o próprio padrão); preenchido, aponta a qualquer provider compatível com Chat Completions. No código o valor passa por `|| undefined`, e não cru: string vazia quebra a resolução do endpoint no SDK em vez de cair no padrão. Cuidado — é esta variável que decide para onde a chave é enviada.
 
-**O modelo padrão é de chat, não de raciocínio**, e isso não é só preço: o `AiService` envia `temperature: 0.2` e `max_tokens`, e modelos de raciocínio rejeitam os dois (exigem `max_completion_tokens` e só aceitam a temperatura padrão). Abrir mão da temperatura baixa contrariaria a fundamentação 4.2.3. Se um dia a etapa de quantidades precisar de raciocínio, o caminho é uma **segunda instância de `AiService` só para ela** — as chamadas já estão separadas, e a etapa 2 é a de menor prompt.
+**O `AiService` não sabe qual modelo está atrás.** Ele recebe cliente, modelo, timeout **e os parâmetros da chamada** por construtor; quem decide os parâmetros é `config/ia.ts`, via `ehModeloDeRaciocinio()`. Colocar essa decisão dentro do service (um regex sobre o nome do modelo) desfaz o que a classe promete e contraria a regra de config ser passada como parâmetro.
 
-O timeout é **por chamada** (60s): 3 × 60s ainda cabe nos 210s de timeout do axios no app. O `AbortSignal` por requisição continua necessário porque o `timeout` do SDK é limpo quando chegam os cabeçalhos, e a geração acontece depois disso.
+| | Modelo de chat | Modelo de raciocínio (`gpt-5*`, `o1`–`o9`) |
+|---|---|---|
+| Temperatura | `0.2` (fundamentação 4.2.3) | **omitida** — só aceita a padrão |
+| Teto de saída | `max_tokens: 8192` | `max_completion_tokens: 24576` — reasoning_tokens contam dentro |
+| Esforço | — | `reasoning_effort: "minimal"` |
+| Timeout por chamada | 60s | 90s |
+
+O padrão continua sendo chat: além do preço, é nele que a `temperature: 0.2` vale. **Abrir mão dela é o custo real de usar a família de raciocínio** — escolha consciente, não detalhe de configuração.
+
+O timeout é **por chamada**, e o orçamento é ditado pela trilha da dieta: seleção e quantidades rodam em **sequência**, então o pior caso é 2 × o teto (120s no chat, 180s no raciocínio). O treino corre em paralelo e se esconde atrás delas. Os 210s de timeout do axios no app precisam ser maiores que isso, senão o app desiste antes do servidor e o usuário nunca vê o erro. **90s é o máximo seguro por chamada.**
+
+O `AbortSignal` por requisição continua necessário porque o `timeout` do SDK é limpo quando chegam os cabeçalhos, e a geração acontece depois disso. É ele que aparece como **`APIUserAbortError`** quando estoura — o teto do SDK daria `APIConnectionTimeoutError`. Foi assim que o `gpt-5` reprovou na primeira tentativa: a etapa de quantidades cortada em 60s exatos.
 
 **`SIMULAR_IA` decide quem monta o plano** e vem **ligada** por padrão: com ela, `plano-simulado.generator` devolve o fixture de `src/data/plano-simulado.ts` em vez de chamar a IA. A troca é feita na composição da rota (`plan.routes.ts`), atrás da interface `GeradorDePlano`; o `plan.service` não sabe qual dos dois recebeu.
 
@@ -489,9 +502,11 @@ Nos testes o `ai.service` é **sempre** substituído por um fake — chamada rea
 
 ### Latência
 
-A chamada única na DeepSeek levava **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio) e era o motivo de `SIMULAR_IA` existir. A divisão em três ataca justamente isso, mas o número real **ainda não foi medido** — use `GET /api/teste-geracao`, que reporta o tempo de cada etapa separadamente.
+A chamada única na DeepSeek levava **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio) e era o motivo de `SIMULAR_IA` existir. A divisão em três ataca justamente isso, mas o número real **ainda não foi medido** — use `GET /api/teste-geracao`.
 
-O timeout do axios no mobile é de 210s, e o teto por chamada é 60s.
+Como ler o benchmark: ele roda as trilhas em **paralelo, como produção**, então `tempo.total_ms` é o wall clock que o app veria (`max(dieta, treino)`) e é ele que decide se o modelo cabe. A soma das `etapas` é maior que o total, de propósito — cada etapa responde *onde* o tempo é gasto, não *quanto* o usuário espera. O custo por chamada individual sai nos logs `[ia:<etapa>]`.
+
+O timeout do axios no mobile é de 210s. O teto por chamada é 60s (chat) ou 90s (raciocínio) — ver a tabela em "`ai.service.ts` e a configuração".
 
 ## Endpoints
 

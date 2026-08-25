@@ -14,9 +14,13 @@ import { Refeicao, SelecaoDieta } from "../types/plano.types";
  *   2. QUANTIDADES — quantas gramas de cada um dos escolhidos.
  *
  * A ordem importa e não pode ser paralelizada: a chamada 2 recebe como entrada
- * exatamente o que a 1 escolheu. É a divisão que reduz o espaço de busca de 591
+ * exatamente o que a 1 escolheu. É a divisão que reduz o espaço de busca de 284
  * alimentos para os 3 a 5 de cada refeição — o motivo de existir, registrado no
- * comentário de reasoning_effort do ai.service.
+ * comentário de `iaTimeoutMs` em config/ia.ts.
+ *
+ * Por serem sequenciais, são estas duas que mandam no orçamento de tempo: o
+ * treino corre em paralelo com a trilha inteira e se esconde atrás dela. É por
+ * isso que o teto por chamada é metade do que o app aguenta esperar.
  *
  * Cada etapa é validada antes de alimentar a seguinte: um erro na seleção vira
  * uma exceção clara aqui, em vez de virar gramas absurdas duas chamadas adiante.
