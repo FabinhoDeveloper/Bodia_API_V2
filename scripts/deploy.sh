@@ -48,6 +48,12 @@ npm run build
 echo "==> Aplicando migrations"
 npx prisma migrate deploy
 
+# Vira a marca de versao exposta pela rota `/` (src/config/versao.ts). Precisa
+# ser exportada ANTES do bloco do PM2: e o `--update-env` do reload que faz o
+# processo reler o ambiente, e o `start` do primeiro deploy herda daqui.
+GIT_COMMIT="$(git rev-parse --short HEAD)"
+export GIT_COMMIT
+
 echo "==> Recarregando o PM2"
 if pm2 describe "$PM2_APP" > /dev/null 2>&1; then
     # --update-env faz o PM2 reler o .env no reload; sem isso, mudar uma

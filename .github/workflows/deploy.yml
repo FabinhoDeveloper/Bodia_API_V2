@@ -62,17 +62,25 @@ jobs:
             - name: Preparar a chave SSH
               env:
                   SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-                  SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+                  SSH_HOST: ${{ secrets.SSH_HOST }}
+                  SSH_HOST_KEY: ${{ vars.SSH_HOST_KEY }}
               run: |
                   mkdir -p ~/.ssh
                   chmod 700 ~/.ssh
                   printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
                   chmod 600 ~/.ssh/id_deploy
-                  # A chave publica do host vem de um secret, e nao de um
-                  # ssh-keyscan na hora: com o keyscan o CI aceitaria qualquer
-                  # chave que o outro lado apresentasse, o que anula a protecao
-                  # contra um host trocado.
-                  printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+                  # A chave publica do host e fixada em SSH_HOST_KEY, e nao
+                  # descoberta por um ssh-keyscan na hora: com o keyscan o CI
+                  # aceitaria qualquer chave que o outro lado apresentasse, o
+                  # que anula a protecao contra um host trocado.
+                  #
+                  # O known_hosts e montado aqui com o MESMO $SSH_HOST usado na
+                  # conexao, em vez de vir pronto num secret. Guardar o arquivo
+                  # inteiro num secret embutia o nome do host dentro dele, e
+                  # nada garantia que fosse o mesmo de SSH_HOST — dominio em vez
+                  # de IP, ou IP antigo depois de recriar a EC2, e o ssh nao
+                  # achava entrada nenhuma ("No ED25519 host key is known").
+                  printf '%s %s\n' "$SSH_HOST" "$SSH_HOST_KEY" > ~/.ssh/known_hosts
                   chmod 644 ~/.ssh/known_hosts
 
             - name: Conectar e publicar

@@ -304,7 +304,15 @@ Três decisões desse script que não devem ser desfeitas sem pensar:
 - **`git reset --hard origin/master`**, não `git pull`. Se a árvore do servidor tiver divergido, o `pull` abriria um conflito e o deploy travaria esperando um input que não existe numa sessão não interativa. O `.env` **não** é afetado — está no `.gitignore`, então é arquivo não rastreado e o reset não encosta nele. As credenciais de produção vivem só na máquina, nunca no repositório nem nos secrets do CI.
 - **`prisma migrate deploy`**, nunca `migrate dev`: só aplica as migrations pendentes, não gera migration nova nem reseta o banco. O `seed` **não** entra no deploy — mesmo sendo idempotente (`skipDuplicates`), popular catálogo é operação de instalação, não de publicação.
 
-O passo de SSH é escrito à mão em vez de usar um action de terceiro: são cinco linhas e evita entregar a chave de produção a um action externo. O `known_hosts` vem de um secret, e não de um `ssh-keyscan` na hora — com o keyscan o CI aceitaria qualquer chave que o outro lado apresentasse, o que anula a proteção contra um host trocado.
+O passo de SSH é escrito à mão em vez de usar um action de terceiro: são cinco linhas e evita entregar a chave de produção a um action externo. A chave pública do host é **fixada** em `SSH_HOST_KEY`, e não descoberta por um `ssh-keyscan` na hora — com o keyscan o CI aceitaria qualquer chave que o outro lado apresentasse, o que anula a proteção contra um host trocado.
+
+O `known_hosts` é **montado no runner** com o mesmo `$SSH_HOST` usado na conexão:
+
+```bash
+printf '%s %s\n' "$SSH_HOST" "$SSH_HOST_KEY" > ~/.ssh/known_hosts
+```
+
+Antes o arquivo inteiro vinha pronto num secret (`SSH_KNOWN_HOSTS`), e isso embutia o nome do host **dentro** dele — sem nada garantir que fosse o mesmo de `SSH_HOST`. Domínio de um lado e IP do outro, ou um IP antigo depois de recriar a EC2, e o ssh não achava entrada nenhuma: `No ED25519 host key is known for ***`. Montando a linha na hora, o nome casa por construção e só a chave precisa ser mantida.
 
 ### Secrets e variables do repositório
 
@@ -315,7 +323,7 @@ Em **Settings → Secrets and variables → Actions**:
 | `SSH_HOST` | secret | IP elástico ou domínio da EC2 |
 | `SSH_USER` | secret | usuário do deploy (`ubuntu` numa AMI Ubuntu) |
 | `SSH_PRIVATE_KEY` | secret | chave privada dedicada ao CI, com as linhas `BEGIN`/`END` |
-| `SSH_KNOWN_HOSTS` | secret | saída de `ssh-keyscan <host>` |
+| `SSH_HOST_KEY` | **variable** | chave pública do host, só tipo + base64 (`ssh-ed25519 AAAA…`), sem o nome do host na frente. Chave **pública** não é segredo, então fica em Variables |
 | `APP_DIR` | secret | caminho do clone na EC2 |
 | `PM2_APP` | **variable** | nome do processo no PM2 — não é segredo, fica em Variables |
 
@@ -325,7 +333,7 @@ Gerar o par de chaves do CI (não reaproveitar o `.pem` da AWS, que dá acesso t
 ssh-keygen -t ed25519 -C "github-actions-bodia" -f ~/.ssh/bodia_ci -N ""
 ssh-copy-id -i ~/.ssh/bodia_ci.pub <user>@<host>
 cat ~/.ssh/bodia_ci     # → SSH_PRIVATE_KEY
-ssh-keyscan <host>      # → SSH_KNOWN_HOSTS
+ssh-keyscan -t ed25519 <host> | awk '{print $2, $3}'   # → SSH_HOST_KEY
 ```
 
 ### Cuidados conhecidos
@@ -512,6 +520,7 @@ O timeout do axios no mobile é de 210s. O teto por chamada é 60s (chat) ou 90s
 
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
+| `GET` | `/` | → **200** `{ message, commit, iniciadoEm }`. Marca da versão no ar: `commit` vem de `GIT_COMMIT` (exportada pelo `deploy.sh`) e `iniciadoEm` é o boot do processo. É o `curl` que confirma **qual** versão o deploy publicou. | — |
 | `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano }` com metas, treino e dieta prontos para a tela. Nada é persistido. `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
 | `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ usuarioId }`. Grava usuário, peso, restrições e as duas fichas numa transação. | **400** sem perfil ou sem plano; **409** e-mail já cadastrado |
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ usuarioId, nome, sobrenome, email }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
