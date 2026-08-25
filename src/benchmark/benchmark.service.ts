@@ -13,9 +13,10 @@ export interface RespostaBenchmark {
         llm_ms: number;
     };
     /**
-     * Tempo de cada trilha (dieta = seleção + quantidades; treino), medido em
-     * sequência. É o dado que diz se dividir a geração em três chamadas valeu, e
-     * qual etapa domina o tempo.
+     * Tempo de cada trilha (dieta = seleção + quantidades; treino). Elas correm
+     * em paralelo, como em produção, então a soma delas é maior que
+     * `tempo.total_ms` — é `total_ms` que diz se cabe no orçamento do app, e as
+     * etapas que dizem qual trilha domina.
      */
     etapas: EtapaBenchmark[];
     resposta: {

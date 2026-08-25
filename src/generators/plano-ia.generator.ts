@@ -78,9 +78,12 @@ export default class PlanoIaGenerator {
      * Mesmo caminho de gerar(), mas medindo cada etapa — existe só para o
      * endpoint de benchmark (GET /api/teste-geracao).
      *
-     * Aqui as trilhas rodam em SEQUÊNCIA de propósito, ao contrário de gerar():
-     * em paralelo os tempos se sobrepõem e deixam de responder à pergunta que o
-     * benchmark existe para responder, que é onde o tempo é gasto.
+     * As trilhas rodam em PARALELO, exatamente como em gerar(). Serializá-las
+     * daria um total que produção nunca vê (a soma, em vez de max(dieta,
+     * treino)) — e é justamente esse total que decide se o modelo cabe nos 210s
+     * de timeout do axios no app. O detalhamento por etapa não se perde com o
+     * paralelismo porque cada CHAMADA registra o próprio tempo nos logs
+     * `[ia:<etapa>]`, no sucesso e na falha.
      */
     async gerarComMetricas(
         perfil: PerfilParaPlano,
@@ -90,55 +93,35 @@ export default class PlanoIaGenerator {
         const { alimentos, exercicios } = this.filtrarCatalogos(perfil, resultado);
         const prepMs = performance.now() - inicioPrep;
 
-        const etapas: ResultadoBenchmarkGeracao["etapas"] = [];
         const inicioTotal = performance.now();
 
-        try {
-            const inicioDieta = performance.now();
-            const refeicoes = await this.dietaGenerator.gerar(
-                resultado,
-                alimentos,
-                perfil.restricoesAlimentares,
-            );
-            etapas.push({ nome: "dieta", ms: performance.now() - inicioDieta, sucesso: true });
+        // allSettled, e não all: com `all`, a rejeição da dieta retornaria
+        // enquanto a promise do treino continua viva — a etapa dele chegaria
+        // depois da resposta montada, e uma falha dele viraria unhandled
+        // rejection. Aqui as duas trilhas terminam sempre, e uma rodada que
+        // falha ainda diz se o treino TAMBÉM falharia.
+        const [dieta, treino] = await Promise.allSettled([
+            this.medir("dieta", () =>
+                this.dietaGenerator.gerar(resultado, alimentos, perfil.restricoesAlimentares),
+            ),
+            this.medir("treino", () =>
+                this.treinoGenerator.gerar(resultado, exercicios, perfil.restricoesFisicas),
+            ),
+        ]);
 
-            const inicioTreino = performance.now();
-            const treino = await this.treinoGenerator.gerar(
-                resultado,
-                exercicios,
-                perfil.restricoesFisicas,
-            );
-            etapas.push({ nome: "treino", ms: performance.now() - inicioTreino, sucesso: true });
+        // Ordem fixa (dieta, treino), não ordem de término: em paralelo a
+        // segunda pode acabar primeiro, e o relatório ficaria embaralhado entre
+        // rodadas.
+        const etapas = [this.etapaDe("dieta", dieta), this.etapaDe("treino", treino)];
+        const llmMs = performance.now() - inicioTotal;
 
-            const plano: PlanoGerado = {
-                dieta: { refeicoes },
-                treino: { sessoes: treino.sessoes },
-                observacoes: treino.observacoes,
-            };
-
-            const validacao = this.validadorMacros.validar(plano, alimentos, resultado);
-
-            return {
-                sucesso: true,
-                prepMs,
-                llmMs: performance.now() - inicioTotal,
-                etapas,
-                jsonValido: true,
-                validacaoOk: validacao.dentroDoLimite,
-                validacao,
-                plano,
-                erro: null,
-            };
-        } catch (erro) {
-            // Mesmo em erro, o tempo até a falha e as etapas que passaram são
-            // justamente o dado que o benchmark quer capturar.
-            const nomeDaEtapa = etapas.length === 0 ? "dieta" : "treino";
-            etapas.push({ nome: nomeDaEtapa, ms: performance.now() - inicioTotal, sucesso: false });
+        if (dieta.status === "rejected" || treino.status === "rejected") {
+            const erro = dieta.status === "rejected" ? dieta.reason : (treino as PromiseRejectedResult).reason;
 
             return {
                 sucesso: false,
                 prepMs,
-                llmMs: performance.now() - inicioTotal,
+                llmMs,
                 etapas,
                 jsonValido: false,
                 validacaoOk: null,
@@ -150,6 +133,61 @@ export default class PlanoIaGenerator {
                 },
             };
         }
+
+        const plano: PlanoGerado = {
+            dieta: { refeicoes: dieta.value.valor },
+            treino: { sessoes: treino.value.valor.sessoes },
+            observacoes: treino.value.valor.observacoes,
+        };
+
+        const validacao = this.validadorMacros.validar(plano, alimentos, resultado);
+
+        return {
+            sucesso: true,
+            prepMs,
+            llmMs,
+            etapas,
+            jsonValido: true,
+            validacaoOk: validacao.dentroDoLimite,
+            validacao,
+            plano,
+            erro: null,
+        };
+    }
+
+    /**
+     * Cronometra uma trilha. Em caso de falha o tempo até o erro é preservado no
+     * próprio rejeição — é o dado que o benchmark mais quer quando uma chamada
+     * estoura o teto.
+     */
+    private async medir<T>(nome: string, trilha: () => Promise<T>): Promise<{ ms: number; valor: T }> {
+        const inicio = performance.now();
+
+        try {
+            // O await sai antes do objeto de propósito: dentro do literal, `ms`
+            // seria avaliado ANTES da trilha rodar e daria sempre ~0.
+            const valor = await trilha();
+
+            return { ms: performance.now() - inicio, valor };
+        } catch (erro) {
+            throw Object.assign(erro instanceof Error ? erro : new Error(String(erro)), {
+                msAteFalhar: performance.now() - inicio,
+                trilha: nome,
+            });
+        }
+    }
+
+    private etapaDe(
+        nome: string,
+        resultado: PromiseSettledResult<{ ms: number; valor: unknown }>,
+    ): ResultadoBenchmarkGeracao["etapas"][number] {
+        if (resultado.status === "fulfilled") {
+            return { nome, ms: resultado.value.ms, sucesso: true };
+        }
+
+        const ms = (resultado.reason as { msAteFalhar?: number })?.msAteFalhar ?? 0;
+
+        return { nome, ms, sucesso: false };
     }
 
     private filtrarCatalogos(perfil: PerfilParaPlano, resultado: ResultadoCalculo) {

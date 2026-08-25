@@ -275,4 +275,85 @@ describe("PlanoIaGenerator", () => {
             );
         });
     });
+
+    // Caminho exclusivo do endpoint temporário de benchmark. Roda as trilhas em
+    // paralelo como gerar(), mas devolve tempo por etapa e nunca lança: uma
+    // falha da IA vira `sucesso: false` no corpo, que é o que o benchmark quer
+    // conseguir inspecionar.
+    describe("gerarComMetricas", () => {
+        it("mede as duas trilhas e devolve o plano validado", async () => {
+            const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
+
+            const metricas = await planoIaGenerator.gerarComMetricas(PERFIL_PLANO, resultado);
+
+            expect(metricas.sucesso).toBe(true);
+            expect(metricas.plano?.dieta.refeicoes).toHaveLength(4);
+            expect(metricas.etapas.map((e) => e.nome)).toEqual(["dieta", "treino"]);
+            expect(metricas.etapas.every((e) => e.sucesso)).toBe(true);
+            expect(metricas.validacaoOk).toBe(metricas.validacao?.dentroDoLimite);
+        });
+
+        it("não lança quando a IA falha — devolve sucesso false com o erro", async () => {
+            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, treino: "nada de json" });
+
+            const metricas = await planoIaGenerator.gerarComMetricas(PERFIL_PLANO, resultado);
+
+            expect(metricas.sucesso).toBe(false);
+            expect(metricas.plano).toBeNull();
+            expect(metricas.erro?.mensagem).toMatch("A IA retornou um JSON inválido no treino");
+        });
+
+        // A trilha que falha precisa aparecer marcada como falha, e a que passou
+        // precisa continuar marcada como sucesso — antes o relatório chutava o
+        // nome pela quantidade de etapas já registradas.
+        it("marca só a trilha que falhou, mantendo a outra como sucesso", async () => {
+            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, treino: "nada de json" });
+
+            const { etapas } = await planoIaGenerator.gerarComMetricas(PERFIL_PLANO, resultado);
+
+            expect(etapas).toEqual([
+                expect.objectContaining({ nome: "dieta", sucesso: true }),
+                expect.objectContaining({ nome: "treino", sucesso: false }),
+            ]);
+        });
+
+        // Com `Promise.all`, a rejeição da dieta retornaria antes de o treino
+        // terminar — a etapa dele nunca entraria no relatório (e a rejeição dele
+        // ficaria sem dono). O allSettled é o que garante as duas.
+        it("executa e reporta o treino mesmo quando a dieta falha", async () => {
+            const { planoIaGenerator, aiService } = criarGerador({
+                ...RESPOSTAS_OK,
+                "dieta:seleção": { refeicoes: [] },
+            });
+
+            const { etapas } = await planoIaGenerator.gerarComMetricas(PERFIL_PLANO, resultado);
+
+            expect(aiService.gerarJson).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.any(String),
+                "treino",
+            );
+            expect(etapas).toEqual([
+                expect.objectContaining({ nome: "dieta", sucesso: false }),
+                expect.objectContaining({ nome: "treino", sucesso: true }),
+            ]);
+        });
+
+        // As trilhas se sobrepõem no relógio, então o total é o max e não a
+        // soma. É esse total que decide se o modelo cabe nos 210s do app — se
+        // ele voltar a ser a soma, o benchmark passa a reprovar modelo que cabe.
+        it("reporta o wall clock das trilhas, não a soma delas", async () => {
+            const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
+
+            const { llmMs, etapas } = await planoIaGenerator.gerarComMetricas(
+                PERFIL_PLANO,
+                resultado,
+            );
+
+            const soma = etapas.reduce((total, etapa) => total + etapa.ms, 0);
+
+            expect(llmMs).toBeGreaterThanOrEqual(Math.max(...etapas.map((e) => e.ms)));
+            expect(llmMs).toBeLessThan(soma);
+        });
+    });
 });

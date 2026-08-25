@@ -21,12 +21,19 @@ export interface EtapaBenchmark {
 export interface ResultadoBenchmarkGeracao {
     sucesso: boolean;
     prepMs: number;
-    /** Soma das etapas. Em produção elas rodam em paralelo e o total é menor. */
+    /**
+     * Wall clock das trilhas — `max(dieta, treino)`, não a soma, porque elas
+     * rodam em paralelo aqui como em produção. É o número que decide se o modelo
+     * cabe nos 210s de timeout do axios no app.
+     */
     llmMs: number;
     /**
-     * Tempo de cada trilha, medido em SEQUÊNCIA de propósito — é o que responde
-     * "onde o tempo é gasto", pergunta que motivou dividir a geração em três
-     * chamadas. Em paralelo os tempos se sobrepõem e o dado se perde.
+     * Tempo de cada trilha. Elas se sobrepõem no relógio, então a soma das
+     * etapas é MAIOR que `llmMs` — o que cada uma responde é "onde o tempo é
+     * gasto", pergunta que motivou dividir a geração em três chamadas.
+     *
+     * Ordem fixa (dieta, treino), não ordem de término. Em falha, `ms` é o tempo
+     * até o erro daquela trilha.
      */
     etapas: EtapaBenchmark[];
     jsonValido: boolean;
