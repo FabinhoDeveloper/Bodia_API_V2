@@ -35,15 +35,15 @@ export interface RespostaBenchmark {
 // alimentar/física para que o catálogo enviado ao prompt seja o maior
 // possível (o mesmo tamanho de catálogo que o pior caso do app real usaria).
 const PERFIL_FICTICIO: PerfilOnboardingInput = {
-    sexo: "M",
-    dataNascimento: "2001-03-10", // ~25 anos
-    peso: 80,
-    altura: 180,
-    percentualGordura: 18,
-    nivelAtividade: "moderado",
+    sexo: "F",
+    dataNascimento: "2004-12-15", // ~25 anos
+    peso: 57,
+    altura: 165,
+    percentualGordura: 12,
+    nivelAtividade: "leve",
     nivelExperiencia: "intermediario",
-    objetivo: "perder", // perda de gordura / recomposição
-    diasPorSemana: 4,
+    objetivo: "ganhar", // perda de gordura / recomposição
+    diasPorSemana: 3,
     numeroRefeicoes: 4,
     restricoesAlimentares: [],
     restricoesFisicas: [],
