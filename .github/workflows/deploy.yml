@@ -51,7 +51,6 @@ jobs:
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             cd /home/ubuntu/Bodia_API_V2
             git pull origin master
-            npm ci
             npx prisma generate
             npx prisma migrate deploy
             npx prisma db seed
