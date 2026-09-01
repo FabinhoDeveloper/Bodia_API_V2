@@ -95,6 +95,8 @@ describe("app (smoke)", () => {
                 "POST /api/treino",
                 "POST /api/treino/:registroTreinoId/concluir",
                 "GET /api/treino",
+                "GET /api/perfil",
+                "PATCH /api/perfil",
                 "POST /api/peso",
                 "GET /api/peso",
             ]),
@@ -117,6 +119,8 @@ describe("app (smoke)", () => {
             ["get", "/api/treino"],
             ["post", "/api/peso"],
             ["get", "/api/peso"],
+            ["get", "/api/perfil"],
+            ["patch", "/api/perfil"],
         ])("devolve 401 em %s %s sem token", async (metodo, rota) => {
             const resposta = await (request(app) as any)[metodo](rota);
 

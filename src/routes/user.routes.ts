@@ -35,7 +35,14 @@ const userController = new UserController(
 // conta, e sem limite dá para varrer uma lista de e-mails com ele.
 router.post("/cadastro", limiteAutenticacao, userController.cadastrar);
 
+router.use("/perfil", autenticacao);
 router.use("/peso", autenticacao);
+
+// PATCH, e não PUT: a tela manda só o que mudou, e campo ausente é campo NÃO
+// alterado — um PUT obrigaria a reenviar o perfil inteiro e transformaria um
+// campo esquecido em apagamento.
+router.get("/perfil", userController.consultarPerfil);
+router.patch("/perfil", userController.atualizarPerfil);
 
 // Registrar o peso RECALCULA as metas na mesma chamada (RF33 + RF34): separá-las
 // abriria a janela em que o peso já mudou e a meta calórica ainda é a de antes.

@@ -78,10 +78,38 @@ function cadastroBase(overrides: Partial<CadastroRequest> = {}): CadastroRequest
     };
 }
 
+/**
+ * Todos os métodos como jest.Mock — tipo mapeado, e não interseção com
+ * `Record<string, jest.Mock>`: numa interseção o método concreto vence a
+ * assinatura de índice e `.mockResolvedValue` some.
+ */
+type UserRepositoryFake = { [K in keyof UserRepository]: jest.Mock };
+
+/** O perfil como `buscarPerfilCompleto` o devolve. */
+function perfilCompleto(overrides: Record<string, unknown> = {}) {
+    return {
+        nome: "Ana",
+        sobrenome: "Silva",
+        sexo: "F",
+        dataNascimento: new Date("1998-04-10T00:00:00.000Z"),
+        alturaCm: 165,
+        percentualGordura: 20,
+        nivelAtividade: "MODERADO",
+        nivelExperiencia: "INICIANTE",
+        objetivo: "PERDER",
+        diasPorSemana: 4,
+        numeroRefeicoes: 4,
+        restricoes: [{ tipo: "ALIMENTAR", descricao: "Lactose" }],
+        ...overrides,
+    };
+}
+
 // O banco nunca é tocado nos testes: repository falso, sem Postgres nem sujeira.
 function repositoryFake(emailExistente = false) {
     return {
         buscarPorEmail: jest.fn().mockResolvedValue(emailExistente ? { id: "existente" } : null),
+        buscarPerfilCompleto: jest.fn().mockResolvedValue(perfilCompleto()),
+        atualizarPerfil: jest.fn().mockResolvedValue(undefined),
         // O `criar` do Prisma devolve a linha inteira, e o service usa nome,
         // sobrenome e e-mail para abrir a sessão — um fake só com `id` deixaria
         // esses campos `undefined` sem nenhum teste acusar.
@@ -91,12 +119,12 @@ function repositoryFake(emailExistente = false) {
             sobrenome: "Silva",
             email: "ana@teste.com",
         }),
-    } as unknown as UserRepository & { buscarPorEmail: jest.Mock; criar: jest.Mock };
+    } as unknown as UserRepositoryFake;
 }
 
 // rounds baixo de propósito: bcrypt com custo real deixaria a suíte lenta. O
 // repository não é exercitado por este caminho — o cadastro só usa gerarHash.
-const authService = new AuthService(repositoryFake(), 4);
+const authService = new AuthService(repositoryFake() as unknown as UserRepository, 4);
 const engineService = new EngineService();
 const perfilMapper = new PerfilMapper();
 
@@ -373,6 +401,109 @@ describe("UserService", () => {
             );
 
             await expect(service.consultarPeso("u1")).resolves.toMatchObject({ metas: null });
+        });
+    });
+
+    // RF10 / UC06. O recálculo é CONDICIONAL: o FA02 é o caso de quem mexeu só
+    // nas restrições, que não entram em fórmula nenhuma.
+    describe("atualizarPerfil", () => {
+        it("grava só os campos enviados", async () => {
+            const { service, repository } = montar();
+
+            await service.atualizarPerfil("u1", { objetivo: "ganhar" });
+
+            const [, dados] = repository.atualizarPerfil.mock.calls[0];
+            expect(dados).toEqual({ objetivo: "GANHAR" });
+        });
+
+        // Sem essa distinção, mandar `{ objetivo }` apagaria altura, nível de
+        // atividade e o resto do perfil.
+        it("não toca em campo ausente", async () => {
+            const { service, repository } = montar();
+
+            await service.atualizarPerfil("u1", { nome: "Aninha" });
+
+            const [, dados] = repository.atualizarPerfil.mock.calls[0];
+            expect(dados).not.toHaveProperty("alturaCm");
+            expect(dados).not.toHaveProperty("nivelAtividade");
+        });
+
+        // RN12.
+        it.each([
+            ["objetivo", { objetivo: "ganhar" as const }],
+            ["nível de atividade", { nivelAtividade: "intenso" as const }],
+            ["altura", { altura: 170 }],
+            ["dias por semana", { diasPorSemana: 5 }],
+            ["data de nascimento", { dataNascimento: "1990-01-01" }],
+        ])("recalcula ao alterar %s", async (_caso, campo) => {
+            const { service, planRepository } = montar();
+
+            const resultado = await service.atualizarPerfil("u1", campo);
+
+            expect(resultado.recalculado).toBe(true);
+            expect(resultado.metas?.caloriasAlvo).toBeGreaterThan(0);
+            expect(planRepository.atualizarMetasDaFichaAtiva).toHaveBeenCalled();
+        });
+
+        // FA02: anunciar "metas atualizadas" quando nada mudou treinaria o
+        // usuário a ignorar o aviso.
+        it.each([
+            ["restrições alimentares", { restricoesAlimentares: ["Glúten"] }],
+            ["nome", { nome: "Aninha" }],
+        ])("NÃO recalcula ao alterar só %s", async (_caso, campo) => {
+            const { service, planRepository } = montar();
+
+            const resultado = await service.atualizarPerfil("u1", campo);
+
+            expect(resultado.recalculado).toBe(false);
+            expect(resultado.metas).toBeNull();
+            expect(planRepository.atualizarMetasDaFichaAtiva).not.toHaveBeenCalled();
+        });
+
+        // Lista vazia é "apaguei todas"; ausente é "não mexi". Tratá-las igual
+        // impediria remover a última restrição.
+        it("substitui as restrições quando a lista vem, mesmo vazia", async () => {
+            const { service, repository } = montar();
+
+            await service.atualizarPerfil("u1", { restricoesAlimentares: [] });
+
+            const [, , restricoes] = repository.atualizarPerfil.mock.calls[0];
+            expect(restricoes).toEqual([]);
+        });
+
+        it("deixa as restrições intactas quando a lista não vem", async () => {
+            const { service, repository } = montar();
+
+            await service.atualizarPerfil("u1", { objetivo: "manter" });
+
+            const [, , restricoes] = repository.atualizarPerfil.mock.calls[0];
+            expect(restricoes).toBeNull();
+        });
+
+        it.each([
+            ["sexo inválido", { sexo: "X" }, /sexo/i],
+            ["altura absurda", { altura: 30 }, /altura/i],
+            ["objetivo desconhecido", { objetivo: "secar" }, /objetivo/i],
+            ["dias fora da faixa", { diasPorSemana: 9 }, /diasPorSemana/i],
+            ["refeições fora da faixa", { numeroRefeicoes: 2 }, /numeroRefeicoes/i],
+            ["nascimento no futuro", { dataNascimento: "3000-01-01" }, /dataNascimento/i],
+        ])("recusa %s sem gravar", async (_caso, campo, mensagem) => {
+            const { service, repository } = montar();
+
+            await expect(
+                service.atualizarPerfil("u1", campo as never),
+            ).rejects.toThrow(mensagem);
+            expect(repository.atualizarPerfil).not.toHaveBeenCalled();
+        });
+
+        it("devolve o perfil no vocabulário da API, não no do banco", async () => {
+            const { service } = montar();
+
+            const { perfil } = await service.atualizarPerfil("u1", { nome: "Ana" });
+
+            expect(perfil.nivelAtividade).toBe("moderado");
+            expect(perfil.objetivo).toBe("perder");
+            expect(perfil.restricoesAlimentares).toEqual(["Lactose"]);
         });
     });
 });

@@ -6,7 +6,16 @@ import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
 import UserRepository from "../repositories/user.repository";
 import { SessaoIniciada } from "../types/auth.types";
-import { ContaInput, ResumoPeso } from "../types/perfil.types";
+import {
+    ContaInput,
+    NivelAtividade,
+    NivelExperiencia,
+    Objetivo,
+    PerfilAtualizado,
+    PerfilUpdateInput,
+    ResumoPeso,
+    Sexo,
+} from "../types/perfil.types";
 import { CadastroRequest } from "../types/plano.types";
 import AuthService from "./auth.service";
 import EngineService from "./engine.service";
@@ -52,6 +61,41 @@ export default class UserService {
     /** Quantos pontos do histórico a tela de peso mostra. */
     private static readonly HISTORICO_PESO = 60;
 
+    /**
+     * Os campos do perfil que entram em alguma fórmula (RN12).
+     *
+     * A lista é explícita, e não "tudo menos as restrições": um campo novo
+     * entra aqui por decisão, e não por esquecimento — errar para o lado de não
+     * recalcular deixaria a meta calórica em silêncio desatualizada.
+     */
+    private static readonly CAMPOS_DE_CALCULO = [
+        "sexo",
+        "dataNascimento",
+        "altura",
+        "percentualGordura",
+        "nivelAtividade",
+        "nivelExperiencia",
+        "objetivo",
+        "diasPorSemana",
+        "numeroRefeicoes",
+    ] as const;
+
+    private static readonly ATIVIDADES: NivelAtividade[] = [
+        "sedentario",
+        "leve",
+        "moderado",
+        "intenso",
+        "atleta",
+    ];
+    private static readonly EXPERIENCIAS: NivelExperiencia[] = [
+        "iniciante",
+        "intermediario",
+        "avancado",
+    ];
+    private static readonly OBJETIVOS: Objetivo[] = ["perder", "manter", "ganhar"];
+
+    private static readonly ALTURA_MIN_CM = 100;
+    private static readonly ALTURA_MAX_CM = 250;
 
     private readonly userRepository;
     private readonly engineService;
@@ -101,6 +145,66 @@ export default class UserService {
         await this.pesoRepository.criar(usuarioId, pesoKg);
 
         return this.recalcular(usuarioId);
+    }
+
+    /** O perfil como a tela de edição o exibe (RF10 / UC06 passo 2). */
+    async consultarPerfil(usuarioId: string): Promise<PerfilAtualizado["perfil"]> {
+        const usuario = await this.userRepository.buscarPerfilCompleto(usuarioId);
+
+        if (!usuario) {
+            throw new NaoEncontradoError("Usuário não encontrado");
+        }
+
+        return this.perfilDoBanco(usuario);
+    }
+
+    /**
+     * Atualiza o perfil e recalcula quando algum campo de cálculo mudou
+     * (RF10 + RN12).
+     *
+     * O recálculo é CONDICIONAL, e não incondicional: o FA02 do UC06 é
+     * exatamente o caso de quem mexeu só nas restrições, que não entram em
+     * fórmula nenhuma. Anunciar "metas atualizadas" quando nada mudou treinaria
+     * o usuário a ignorar o aviso.
+     *
+     * O peso não entra aqui: tem rota própria, porque é um evento com histórico
+     * e não um campo que se sobrescreve.
+     */
+    async atualizarPerfil(
+        usuarioId: string,
+        entrada: PerfilUpdateInput,
+    ): Promise<PerfilAtualizado> {
+        const atual = await this.userRepository.buscarPerfilCompleto(usuarioId);
+
+        if (!atual) {
+            throw new NaoEncontradoError("Usuário não encontrado");
+        }
+
+        const dados = this.validarPerfil(entrada);
+        const restricoes = this.restricoesDe(entrada);
+
+        await this.userRepository.atualizarPerfil(usuarioId, dados, restricoes);
+
+        // RN12: só estes campos entram nas fórmulas. `dataNascimento` entra pela
+        // idade, e `diasPorSemana`/`numeroRefeicoes` pelo treino e pela divisão
+        // das refeições.
+        const afetaCalculo = UserService.CAMPOS_DE_CALCULO.some(
+            (campo) => entrada[campo] !== undefined,
+        );
+
+        const perfil = this.perfilDoBanco(
+            (await this.userRepository.buscarPerfilCompleto(usuarioId))!,
+        );
+
+        if (!afetaCalculo) {
+            return { perfil, recalculado: false, metas: null, planoDesatualizado: false };
+        }
+
+        // RN13: o recálculo passa pelo mesmo motor, com os mesmos limites de
+        // segurança — não há um caminho "de atualização" com regras próprias.
+        const { metas, planoDesatualizado } = await this.recalcular(usuarioId);
+
+        return { perfil, recalculado: true, metas, planoDesatualizado };
     }
 
     /** O histórico e as metas vigentes, sem gravar nada. */
@@ -165,6 +269,181 @@ export default class UserService {
         );
 
         return { historico, metas, planoDesatualizado: tinhaFicha };
+    }
+
+    /**
+     * Confere os campos enviados e devolve só os que vieram, já no vocabulário
+     * do banco.
+     *
+     * Campo ausente é campo NÃO ALTERADO — daí o `undefined` filtrado em vez de
+     * gravado. Sem essa distinção, mandar `{ objetivo: "ganhar" }` apagaria
+     * altura, nível de atividade e todo o resto do perfil.
+     */
+    private validarPerfil(entrada: PerfilUpdateInput) {
+        const dados: Record<string, unknown> = {};
+
+        if (entrada.nome !== undefined) {
+            if (String(entrada.nome).trim().length < UserService.NOME_MIN) {
+                throw new ValidationError("nome é obrigatório");
+            }
+            dados.nome = String(entrada.nome).trim();
+        }
+
+        if (entrada.sobrenome !== undefined) {
+            if (String(entrada.sobrenome).trim().length < UserService.NOME_MIN) {
+                throw new ValidationError("sobrenome é obrigatório");
+            }
+            dados.sobrenome = String(entrada.sobrenome).trim();
+        }
+
+        if (entrada.sexo !== undefined) {
+            if (entrada.sexo !== "M" && entrada.sexo !== "F") {
+                throw new ValidationError("sexo deve ser M ou F");
+            }
+            dados.sexo = entrada.sexo;
+        }
+
+        if (entrada.dataNascimento !== undefined) {
+            const nascimento = new Date(entrada.dataNascimento);
+
+            if (Number.isNaN(nascimento.getTime()) || nascimento > new Date()) {
+                throw new ValidationError("dataNascimento inválida");
+            }
+            dados.dataNascimento = nascimento;
+        }
+
+        if (entrada.altura !== undefined) {
+            if (
+                typeof entrada.altura !== "number" ||
+                entrada.altura < UserService.ALTURA_MIN_CM ||
+                entrada.altura > UserService.ALTURA_MAX_CM
+            ) {
+                throw new ValidationError(
+                    `altura deve estar entre ${UserService.ALTURA_MIN_CM} e ${UserService.ALTURA_MAX_CM} cm`,
+                );
+            }
+            dados.alturaCm = entrada.altura;
+        }
+
+        if (entrada.percentualGordura !== undefined) {
+            const percentual = entrada.percentualGordura;
+
+            // Nulo é legítimo: o campo é opcional no onboarding, e limpá-lo
+            // precisa ser possível.
+            if (percentual !== null && (typeof percentual !== "number" || percentual < 1 || percentual > 70)) {
+                throw new ValidationError("percentualGordura deve estar entre 1 e 70");
+            }
+            dados.percentualGordura = percentual;
+        }
+
+        if (entrada.nivelAtividade !== undefined) {
+            this.exigirOpcao(entrada.nivelAtividade, UserService.ATIVIDADES, "nivelAtividade");
+            dados.nivelAtividade = this.perfilMapper.nivelAtividade(entrada.nivelAtividade);
+        }
+
+        if (entrada.nivelExperiencia !== undefined) {
+            this.exigirOpcao(
+                entrada.nivelExperiencia,
+                UserService.EXPERIENCIAS,
+                "nivelExperiencia",
+            );
+            dados.nivelExperiencia = this.perfilMapper.nivelExperiencia(
+                entrada.nivelExperiencia,
+            );
+        }
+
+        if (entrada.objetivo !== undefined) {
+            this.exigirOpcao(entrada.objetivo, UserService.OBJETIVOS, "objetivo");
+            dados.objetivo = this.perfilMapper.objetivo(entrada.objetivo);
+        }
+
+        // As mesmas faixas que o EngineService exige — os splits só existem de 2
+        // a 6 dias, e a tabela de distribuição só cobre de 3 a 6 refeições.
+        if (entrada.diasPorSemana !== undefined) {
+            if (
+                !Number.isInteger(entrada.diasPorSemana) ||
+                entrada.diasPorSemana < 2 ||
+                entrada.diasPorSemana > 6
+            ) {
+                throw new ValidationError("diasPorSemana deve ser um inteiro entre 2 e 6");
+            }
+            dados.diasPorSemana = entrada.diasPorSemana;
+        }
+
+        if (entrada.numeroRefeicoes !== undefined) {
+            if (
+                !Number.isInteger(entrada.numeroRefeicoes) ||
+                entrada.numeroRefeicoes < 3 ||
+                entrada.numeroRefeicoes > 6
+            ) {
+                throw new ValidationError("numeroRefeicoes deve ser um inteiro entre 3 e 6");
+            }
+            dados.numeroRefeicoes = entrada.numeroRefeicoes;
+        }
+
+        return dados;
+    }
+
+    private exigirOpcao(valor: string, aceitos: readonly string[], campo: string): void {
+        if (!aceitos.includes(valor)) {
+            throw new ValidationError(`${campo} deve ser um de: ${aceitos.join(", ")}`);
+        }
+    }
+
+    /**
+     * As restrições no formato do banco, ou `null` quando nenhuma das duas
+     * listas veio.
+     *
+     * `null` e lista vazia significam coisas diferentes: a primeira é "não
+     * mexi", a segunda é "apaguei todas". Tratá-las igual impediria o usuário de
+     * remover a última restrição.
+     */
+    private restricoesDe(entrada: PerfilUpdateInput) {
+        const { restricoesAlimentares, restricoesFisicas } = entrada;
+
+        if (restricoesAlimentares === undefined && restricoesFisicas === undefined) {
+            return null;
+        }
+
+        return [
+            ...(restricoesAlimentares ?? []).map((descricao) => ({
+                tipo: "ALIMENTAR" as const,
+                descricao,
+            })),
+            ...(restricoesFisicas ?? []).map((descricao) => ({
+                tipo: "FISICA" as const,
+                descricao,
+            })),
+        ];
+    }
+
+    /** O usuário gravado, no vocabulário da API que a tela consome. */
+    private perfilDoBanco(
+        usuario: NonNullable<
+            Awaited<ReturnType<UserRepository["buscarPerfilCompleto"]>>
+        >,
+    ): PerfilAtualizado["perfil"] {
+        const paraMotor = this.perfilMapper.paraMotor(usuario, 0);
+
+        return {
+            nome: usuario.nome,
+            sobrenome: usuario.sobrenome,
+            sexo: usuario.sexo as Sexo,
+            dataNascimento: paraMotor.dataNascimento,
+            alturaCm: usuario.alturaCm,
+            percentualGordura: usuario.percentualGordura,
+            nivelAtividade: paraMotor.nivelAtividade,
+            nivelExperiencia: paraMotor.nivelExperiencia,
+            objetivo: paraMotor.objetivo,
+            diasPorSemana: usuario.diasPorSemana,
+            numeroRefeicoes: usuario.numeroRefeicoes,
+            restricoesAlimentares: usuario.restricoes
+                .filter((r) => r.tipo === "ALIMENTAR")
+                .map((r) => r.descricao),
+            restricoesFisicas: usuario.restricoes
+                .filter((r) => r.tipo === "FISICA")
+                .map((r) => r.descricao),
+        };
     }
 
     /** O recorte do ResultadoCalculo que a FichaAlimentacao guarda. */

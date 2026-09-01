@@ -1,4 +1,4 @@
-import { PrismaClient, Sexo } from "@prisma/client";
+import { Prisma, PrismaClient, Sexo, TipoRestricao } from "@prisma/client";
 
 import PerfilMapper from "../mappers/perfil.mapper";
 import { ContaInput, PerfilOnboardingInput, ResultadoCalculo } from "../types/perfil.types";
@@ -25,6 +25,64 @@ export default class UserRepository {
 
     buscarPorEmail(email: string) {
         return this.prismaClient.usuario.findUnique({ where: { email } });
+    }
+
+    /**
+     * O perfil inteiro para a tela de edição — os dados pessoais, os físicos e
+     * as restrições.
+     *
+     * Separado de `PesoRepository.buscarPerfil`, que traz só o recorte que o
+     * MOTOR consome: aqui entram nome, sobrenome e as restrições, que a tela
+     * precisa exibir e o motor não usa.
+     */
+    buscarPerfilCompleto(usuarioId: string) {
+        return this.prismaClient.usuario.findUnique({
+            where: { id: usuarioId },
+            select: {
+                nome: true,
+                sobrenome: true,
+                sexo: true,
+                dataNascimento: true,
+                alturaCm: true,
+                percentualGordura: true,
+                nivelAtividade: true,
+                nivelExperiencia: true,
+                objetivo: true,
+                diasPorSemana: true,
+                numeroRefeicoes: true,
+                restricoes: { select: { tipo: true, descricao: true } },
+            },
+        });
+    }
+
+    /**
+     * Atualiza o perfil e, quando as restrições vierem, as substitui inteiras.
+     *
+     * Substituir (apagar todas e recriar) em vez de fazer o diff: a lista é
+     * curta, vem completa da tela, e um diff exigiria comparar por descrição —
+     * que é justamente o campo que o usuário edita. Tudo na mesma transação,
+     * senão uma falha no meio deixaria o usuário sem restrição nenhuma, que é o
+     * estado perigoso.
+     */
+    async atualizarPerfil(
+        usuarioId: string,
+        dados: Prisma.UsuarioUpdateInput,
+        restricoes: { tipo: TipoRestricao; descricao: string }[] | null,
+    ): Promise<void> {
+        const operacoes: Prisma.PrismaPromise<unknown>[] = [
+            this.prismaClient.usuario.update({ where: { id: usuarioId }, data: dados }),
+        ];
+
+        if (restricoes) {
+            operacoes.push(
+                this.prismaClient.restricao.deleteMany({ where: { usuarioId } }),
+                this.prismaClient.restricao.createMany({
+                    data: restricoes.map((r) => ({ ...r, usuarioId })),
+                }),
+            );
+        }
+
+        await this.prismaClient.$transaction(operacoes);
     }
 
     /**

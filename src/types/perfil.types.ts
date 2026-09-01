@@ -152,3 +152,59 @@ export interface ResumoPeso {
      */
     planoDesatualizado: boolean;
 }
+
+/**
+ * Os campos que a edição de perfil aceita (RF10 / UC06). Todos opcionais: a
+ * tela manda só o que mudou.
+ *
+ * `peso` NÃO está aqui de propósito: ele tem rota própria (`POST /api/peso`),
+ * porque pesar-se é um EVENTO com histórico, e não um campo que se sobrescreve.
+ * Aceitá-lo nos dois lugares criaria dois caminhos para o mesmo fato.
+ *
+ * O e-mail também fica de fora: trocá-lo é trocar a credencial de acesso, e
+ * exige confirmação do endereço novo — fluxo próprio, não um campo de formulário.
+ */
+export interface PerfilUpdateInput {
+    nome?: string;
+    sobrenome?: string;
+    sexo?: Sexo;
+    dataNascimento?: string;
+    altura?: number;
+    percentualGordura?: number | null;
+    nivelAtividade?: NivelAtividade;
+    nivelExperiencia?: NivelExperiencia;
+    objetivo?: Objetivo;
+    diasPorSemana?: number;
+    numeroRefeicoes?: number;
+    restricoesAlimentares?: string[];
+    restricoesFisicas?: string[];
+}
+
+/**
+ * O que a edição devolve: o perfil já gravado, as metas recalculadas e o aviso
+ * de que o cardápio ficou defasado.
+ *
+ * `recalculado` é `false` no caso do FA02 do UC06 — o usuário mexeu só nas
+ * restrições, que não entram em nenhuma fórmula. Dizer "metas atualizadas"
+ * quando nada mudou treinaria o usuário a ignorar o aviso.
+ */
+export interface PerfilAtualizado {
+    perfil: {
+        nome: string;
+        sobrenome: string;
+        sexo: Sexo;
+        dataNascimento: string;
+        alturaCm: number;
+        percentualGordura: number | null;
+        nivelAtividade: NivelAtividade;
+        nivelExperiencia: NivelExperiencia;
+        objetivo: Objetivo;
+        diasPorSemana: number;
+        numeroRefeicoes: number;
+        restricoesAlimentares: string[];
+        restricoesFisicas: string[];
+    };
+    recalculado: boolean;
+    metas: ResumoPeso["metas"];
+    planoDesatualizado: boolean;
+}

@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 
 import { usuarioAutenticado } from "../middlewares/autenticacao";
 import UserService from "../services/user.service";
+import { PerfilUpdateInput } from "../types/perfil.types";
 import { CadastroRequest } from "../types/plano.types";
 
 /**
@@ -30,6 +31,20 @@ export default class UserController {
         this.userService
             .registrarPeso(usuarioAutenticado(req), pesoKg)
             .then((resumo) => res.status(201).json(resumo))
+            .catch(next);
+    };
+
+    consultarPerfil = (req: Request, res: Response, next: NextFunction) => {
+        this.userService
+            .consultarPerfil(usuarioAutenticado(req))
+            .then((perfil) => res.json(perfil))
+            .catch(next);
+    };
+
+    atualizarPerfil = (req: Request, res: Response, next: NextFunction) => {
+        this.userService
+            .atualizarPerfil(usuarioAutenticado(req), (req.body ?? {}) as PerfilUpdateInput)
+            .then((resultado) => res.json(resultado))
             .catch(next);
     };
 
