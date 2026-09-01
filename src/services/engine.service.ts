@@ -1,4 +1,15 @@
 import { metaAguaMl } from "../data/hidratacao";
+import {
+    ALTURA_MAX_CM,
+    ALTURA_MIN_CM,
+    FATOR_MIN_SOBRE_TMB,
+    IDADE_MAX,
+    IDADE_MIN,
+    KCAL_MIN_ABSOLUTO,
+    PESO_MAX_KG,
+    PESO_MIN_KG,
+    PROTEINA_MAX_FRACAO_KCAL,
+} from "../data/limites-seguranca";
 import ValidationError from "../errors/validation.error";
 import {
     cabeNaSessao,
@@ -32,6 +43,12 @@ interface Sessao {
  *
  * O resultado (ResultadoCalculo) é o que o PlanoPrompt injeta no prompt da
  * IA — o LLM só recebe estes valores prontos, nunca recalcula nada aqui.
+ *
+ * Os LIMITES DE SEGURANÇA (RF17) são aplicados em duas frentes: na entrada,
+ * pelo `validarPerfil`, que recusa o que não pode ser calculado; e na saída,
+ * pelos pisos e tetos de `data/limites-seguranca.ts`, que aparam o resultado.
+ * As duas coisas são necessárias — um perfil perfeitamente plausível ainda pode
+ * produzir uma meta calórica baixa demais depois do déficit.
  */
 export default class EngineService {
     // escala 1,2-1,9 citada na fundamentação (Harris & Benedict, 1919; Mifflin et al., 1990)
@@ -154,7 +171,7 @@ export default class EngineService {
         this.validarPerfil(perfil);
 
         const metabolismo = this.calcularMetabolismo(perfil);
-        const meta = this.calcularMetaCalorica(perfil.objetivo, metabolismo.tdee);
+        const meta = this.calcularMetaCalorica(perfil, metabolismo);
         const macros = this.calcularMacros(perfil, meta.caloriasAlvo);
         const treino = this.calcularTreino(perfil);
         const dieta = this.calcularDieta(perfil, meta, macros);
@@ -173,11 +190,29 @@ export default class EngineService {
         ) {
             throw new ValidationError("numeroRefeicoes deve ser um inteiro entre 3 e 6");
         }
-        if (perfil.peso <= 0) {
-            throw new ValidationError("peso deve ser maior que zero");
+        // RF17 na ENTRADA. As faixas não são julgamento sobre corpo nenhum: são
+        // o intervalo fora do qual o valor certamente é erro de digitação ou de
+        // unidade (1,75 em vez de 175 cm), e um deles contamina TMB, meta
+        // calórica, macros e hidratação de uma vez só.
+        if (!Number.isFinite(perfil.peso) || perfil.peso < PESO_MIN_KG || perfil.peso > PESO_MAX_KG) {
+            throw new ValidationError(`peso deve estar entre ${PESO_MIN_KG} e ${PESO_MAX_KG} kg`);
         }
-        if (perfil.altura <= 0) {
-            throw new ValidationError("altura deve ser maior que zero");
+        if (
+            !Number.isFinite(perfil.altura) ||
+            perfil.altura < ALTURA_MIN_CM ||
+            perfil.altura > ALTURA_MAX_CM
+        ) {
+            throw new ValidationError(
+                `altura deve estar entre ${ALTURA_MIN_CM} e ${ALTURA_MAX_CM} cm`,
+            );
+        }
+
+        const idade = this.calcularIdade(perfil.dataNascimento);
+
+        if (!Number.isFinite(idade) || idade < IDADE_MIN || idade > IDADE_MAX) {
+            throw new ValidationError(
+                `idade deve estar entre ${IDADE_MIN} e ${IDADE_MAX} anos`,
+            );
         }
     }
 
@@ -217,11 +252,36 @@ export default class EngineService {
         return { idade, imc, tmb, fatorAtividade, tdee };
     }
 
-    private calcularMetaCalorica(objetivo: Objetivo, tdee: number): ResultadoCalculo["meta"] {
-        const ajustePercentual = EngineService.AJUSTE_CALORICO[objetivo];
-        const caloriasAlvo = Math.round(tdee * (1 + ajustePercentual));
+    /**
+     * A meta calórica, com o PISO de segurança do RF17 aplicado depois do ajuste.
+     *
+     * São dois pisos, e o maior vence, porque cada um cobre o que o outro deixa
+     * passar: o absoluto (`KCAL_MIN_ABSOLUTO`) protege quem é pequeno o
+     * suficiente para que uma fração da TMB ainda seja pouco demais; o relativo
+     * (`FATOR_MIN_SOBRE_TMB`) protege quem é grande o suficiente para que 1500
+     * kcal continuem sendo um déficit extremo.
+     *
+     * O piso é aplicado AQUI, e não no fim de tudo, porque os macros são
+     * calculados a partir da meta: aparar depois deixaria proteína, carboidrato
+     * e gordura somando um total que a meta não tem mais.
+     */
+    private calcularMetaCalorica(
+        perfil: PerfilInput,
+        metabolismo: ResultadoCalculo["metabolismo"],
+    ): ResultadoCalculo["meta"] {
+        const ajustePercentual = EngineService.AJUSTE_CALORICO[perfil.objetivo];
+        const calculado = Math.round(metabolismo.tdee * (1 + ajustePercentual));
 
-        return { objetivo, ajustePercentual, caloriasAlvo };
+        const piso = Math.max(
+            KCAL_MIN_ABSOLUTO[perfil.sexo],
+            Math.round(metabolismo.tmb * FATOR_MIN_SOBRE_TMB),
+        );
+
+        // Sem log: este service é PURO, e é chamado a cada geração e a cada
+        // recálculo de peso. Que o piso agiu se lê no resultado que o
+        // plan.service já imprime — `tdee × (1 + ajustePercentual)` diferente de
+        // `caloriasAlvo` é exatamente isso.
+        return { objetivo: perfil.objetivo, ajustePercentual, caloriasAlvo: Math.max(calculado, piso) };
     }
 
     private calcularMacros(perfil: PerfilInput, caloriasAlvo: number): ResultadoCalculo["macros"] {
@@ -230,8 +290,13 @@ export default class EngineService {
                 ? perfil.peso * (1 - perfil.percentualGordura / 100)
                 : perfil.peso;
 
-        const proteinaG = Math.round(
-            EngineService.PROTEINA_G_POR_KG[perfil.objetivo] * massaReferenciaProteina,
+        // RF17 na SAÍDA: o teto impede que proteína e gordura sozinhas estourem
+        // a meta. Sem ele o caso extremo virava erro de geração — o usuário via
+        // "não foi possível gerar seu plano" em vez de um plano seguro.
+        const proteinaKcalMax = Math.floor(caloriasAlvo * PROTEINA_MAX_FRACAO_KCAL);
+        const proteinaG = Math.min(
+            Math.round(EngineService.PROTEINA_G_POR_KG[perfil.objetivo] * massaReferenciaProteina),
+            Math.floor(proteinaKcalMax / 4),
         );
         const proteinaKcal = proteinaG * 4;
 

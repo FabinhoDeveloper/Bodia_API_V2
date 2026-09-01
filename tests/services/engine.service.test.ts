@@ -1,4 +1,10 @@
-import EngineService from "../../src/services/engine.service";
+import {
+    ALTURA_MIN_CM,
+    KCAL_MIN_ABSOLUTO,
+    PESO_MAX_KG,
+    PESO_MIN_KG,
+    PROTEINA_MAX_FRACAO_KCAL,
+} from "../../src/data/limites-seguranca";
 import {
     exerciciosNecessarios,
     MAX_EXERCICIOS_POR_SESSAO,
@@ -6,6 +12,7 @@ import {
     MAX_SERIES_POR_GRUPO_SESSAO,
     MIN_SERIES_POR_EXERCICIO,
 } from "../../src/data/volume-treino";
+import EngineService from "../../src/services/engine.service";
 import {
     NivelAtividade,
     NivelExperiencia,
@@ -49,15 +56,22 @@ describe("EngineService", () => {
             expect(resultado.metabolismo.tdee).toBe(2136);
         });
 
-        it("aplica o déficit calórico do objetivo sobre o TDEE", () => {
+        // O déficit de 20% sobre 2136 daria 1709, mas o piso de segurança do
+        // RF17 sobe a meta para a própria TMB (1780): num perfil sedentário o
+        // TDEE é só 1,2× a TMB, então um déficit de 20% já prescreve menos
+        // energia do que o corpo gasta em repouso.
+        it("aplica o déficit calórico e depois o piso de segurança", () => {
             expect(resultado.meta.ajustePercentual).toBe(-0.2);
-            expect(resultado.meta.caloriasAlvo).toBe(1709);
+            expect(resultado.meta.caloriasAlvo).toBe(1780);
+            expect(resultado.meta.caloriasAlvo).toBe(resultado.metabolismo.tmb);
         });
 
-        it("distribui os macros usando o peso total (sem percentual de gordura informado)", () => {
-            expect(resultado.macros.proteina).toEqual({ g: 216, kcal: 864 });
-            expect(resultado.macros.gordura).toEqual({ g: 47, kcal: 427 });
-            expect(resultado.macros.carboidrato).toEqual({ g: 105, kcal: 418 });
+        // 2,7 g/kg × 80 kg daria 216 g (864 kcal), mas o teto do RF17 limita a
+        // proteína a 40% da meta — 712 kcal, 178 g.
+        it("distribui os macros usando o peso total, com o teto de proteína", () => {
+            expect(resultado.macros.proteina).toEqual({ g: 178, kcal: 712 });
+            expect(resultado.macros.gordura).toEqual({ g: 49, kcal: 445 });
+            expect(resultado.macros.carboidrato).toEqual({ g: 156, kcal: 623 });
         });
 
         it("monta o split de treino e o volume por nível de experiência", () => {
@@ -136,8 +150,10 @@ describe("EngineService", () => {
         expect(resultado.metabolismo.tdee).toBe(tdeeEsperado);
     });
 
+    // 'perder' daria 1709 pelo ajuste, mas o piso de segurança do RF17 sobe
+    // para a TMB (1780) — ver o bloco "limites de segurança" no fim do arquivo.
     it.each([
-        ["perder", 1709],
+        ["perder", 1780],
         ["manter", 2136],
         ["ganhar", 2403],
     ] satisfies [Objetivo, number][])("ajusta a meta calórica para o objetivo '%s'", (objetivo, caloriasEsperadas) => {
@@ -405,13 +421,106 @@ describe("EngineService", () => {
             );
         });
 
-        it("lança erro se peso ou altura não forem positivos", () => {
-            expect(() => engineService.calcular(perfilBase({ peso: 0 }))).toThrow(
-                "peso deve ser maior que zero",
+        // RF17 na entrada. As faixas não são julgamento sobre corpo nenhum:
+        // são o intervalo fora do qual o valor certamente é erro de digitação
+        // ou de unidade, e um deles contamina TMB, meta, macros e hidratação de
+        // uma vez só.
+        it.each([
+            ["peso zero", { peso: 0 }, /peso/],
+            ["peso negativo", { peso: -70 }, /peso/],
+            ["peso de criança pequena, provável erro de unidade", { peso: 7 }, /peso/],
+            ["peso absurdo", { peso: 800 }, /peso/],
+            ["altura negativa", { altura: -10 }, /altura/],
+            ["altura em metros em vez de cm", { altura: 1.8 }, /altura/],
+            ["altura absurda", { altura: 300 }, /altura/],
+            ["menor de 14 anos", { dataNascimento: dataNascimentoParaIdade(10) }, /idade/],
+            ["idade implausível", { dataNascimento: dataNascimentoParaIdade(130) }, /idade/],
+        ] satisfies [string, Partial<PerfilInput>, RegExp][])(
+            "recusa %s",
+            (_caso, override, mensagem) => {
+                expect(() => engineService.calcular(perfilBase(override))).toThrow(mensagem);
+            },
+        );
+    });
+
+    // RF17 na SAÍDA: um perfil perfeitamente plausível ainda pode produzir uma
+    // meta calórica baixa demais depois do déficit.
+    describe("limites de segurança nos cálculos", () => {
+        it("nunca prescreve menos energia do que o corpo gasta em repouso", () => {
+            // Toda combinação, e não um caso escolhido: o piso é uma garantia,
+            // não um remendo para um perfil específico.
+            for (const sexo of ["M", "F"] as const) {
+                for (const nivelAtividade of [
+                    "sedentario",
+                    "leve",
+                    "moderado",
+                    "intenso",
+                    "atleta",
+                ] satisfies NivelAtividade[]) {
+                    for (const peso of [45, 60, 80, 120]) {
+                        const resultado = engineService.calcular(
+                            perfilBase({ sexo, nivelAtividade, peso, objetivo: "perder" }),
+                        );
+
+                        expect(resultado.meta.caloriasAlvo).toBeGreaterThanOrEqual(
+                            resultado.metabolismo.tmb,
+                        );
+                    }
+                }
+            }
+        });
+
+        it.each([
+            ["F", KCAL_MIN_ABSOLUTO.F],
+            ["M", KCAL_MIN_ABSOLUTO.M],
+        ] satisfies [PerfilInput["sexo"], number][])(
+            "respeita o piso calórico absoluto para o sexo %s",
+            (sexo, piso) => {
+                // Pessoa pequena e sedentária: é onde a TMB sozinha ficaria
+                // abaixo do limiar clínico.
+                const resultado = engineService.calcular(
+                    perfilBase({
+                        sexo,
+                        peso: PESO_MIN_KG,
+                        altura: ALTURA_MIN_CM,
+                        nivelAtividade: "sedentario",
+                        objetivo: "perder",
+                    }),
+                );
+
+                expect(resultado.meta.caloriasAlvo).toBeGreaterThanOrEqual(piso);
+            },
+        );
+
+        // Sem o teto, proteína e gordura sozinhas estouravam a meta e o cálculo
+        // LANÇAVA — o usuário via "não foi possível gerar seu plano" em vez de
+        // um plano seguro.
+        it("nunca deixa a proteína passar do teto da meta calórica", () => {
+            for (const peso of [80, 120, 200, PESO_MAX_KG]) {
+                const resultado = engineService.calcular(
+                    perfilBase({ peso, objetivo: "perder", percentualGordura: null }),
+                );
+
+                expect(resultado.macros.proteina.kcal).toBeLessThanOrEqual(
+                    resultado.meta.caloriasAlvo * PROTEINA_MAX_FRACAO_KCAL,
+                );
+                expect(resultado.macros.carboidrato.g).toBeGreaterThan(0);
+            }
+        });
+
+        // Os macros são calculados A PARTIR da meta: se o piso fosse aplicado
+        // depois, os três somariam um total que a meta não tem mais.
+        it("mantém os macros somando a meta depois do piso", () => {
+            const resultado = engineService.calcular(
+                perfilBase({ nivelAtividade: "sedentario", objetivo: "perder" }),
             );
-            expect(() => engineService.calcular(perfilBase({ altura: -10 }))).toThrow(
-                "altura deve ser maior que zero",
-            );
+
+            const soma =
+                resultado.macros.proteina.kcal +
+                resultado.macros.gordura.kcal +
+                resultado.macros.carboidrato.kcal;
+
+            expect(soma).toBe(resultado.meta.caloriasAlvo);
         });
     });
 });
