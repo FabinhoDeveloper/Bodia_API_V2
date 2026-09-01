@@ -14,9 +14,9 @@
 // Execução (o que o usuário de fato fez):
 //   RegistroHidratacao — água ingerida
 //   RegistroRefeicao   — refeição prescrita marcada como consumida
+//   RegistroTreino     → RegistroSerie[] — treino executado, série a série
 //
 // Prescrição e execução são coisas distintas e vivem em tabelas próprias.
-// Ainda não modelado: treino feito.
 //
 // Os enums espelham os tipos de src/services/CalculoService.ts.
 
@@ -121,6 +121,7 @@ model Usuario {
   hidratacoes       RegistroHidratacao[]
   refeicoesFeitas   RegistroRefeicao[]
   cargas            CargaExercicio[]
+  treinosFeitos     RegistroTreino[]
 }
 
 /// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo
@@ -209,6 +210,7 @@ model SessaoTreino {
 
   fichaTreino FichaTreino       @relation(fields: [fichaTreinoId], references: [id], onDelete: Cascade)
   exercicios  ExercicioSessao[]
+  execucoes   RegistroTreino[]
 
   @@index([fichaTreinoId])
 }
@@ -229,6 +231,7 @@ model ExercicioSessao {
 
   sessaoTreino SessaoTreino @relation(fields: [sessaoTreinoId], references: [id], onDelete: Cascade)
   exercicio    Exercicio    @relation(fields: [exercicioId], references: [id])
+  seriesFeitas RegistroSerie[]
 
   @@index([sessaoTreinoId])
 }
@@ -386,6 +389,60 @@ model RegistroRefeicao {
 
   /// O dia do usuário e o histórico por período.
   @@index([usuarioId, registradoEm])
+}
+
+/// Um treino executado: a sessão prescrita que o usuário de fato fez.
+///
+/// Aponta para a SessaoTreino da ficha, e não para a ficha ativa do momento da
+/// leitura. Como a ficha antiga é desativada e nunca apagada, o histórico
+/// continua dizendo qual treino foi feito mesmo depois de o usuário gerar um
+/// plano novo — mesma mecânica de RegistroRefeicao.
+///
+/// `concluidoEm` nulo significa treino ABERTO (em andamento). Sessão abandonada
+/// fica assim para sempre, e é o que separa "fiz" de "comecei": as consultas
+/// filtram por `concluidoEm` não-nulo.
+model RegistroTreino {
+  id             String    @id @default(uuid())
+  usuarioId      String
+  sessaoTreinoId String
+  iniciadoEm     DateTime  @default(now())
+  concluidoEm    DateTime?
+
+  usuario      Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sessaoTreino SessaoTreino @relation(fields: [sessaoTreinoId], references: [id], onDelete: Cascade)
+  series       RegistroSerie[]
+
+  /// A semana do usuário (cards de treino) e o histórico por período.
+  @@index([usuarioId, iniciadoEm])
+}
+
+/// Uma série executada: o peso e as repetições daquela série específica.
+///
+/// UMA LINHA POR SÉRIE, ao contrário de ExercicioSessao, que é uma linha por
+/// exercício. A diferença não é inconsistência: na PRESCRIÇÃO as três séries
+/// são idênticas ("3x8-12"), e repetir a linha não acrescentaria informação; na
+/// EXECUÇÃO elas divergem — a carga cai na terceira série, as repetições não
+/// fecham —, e é justamente essa variação que o usuário registra.
+///
+/// Não há tabela intermediária de "exercício executado": ela não carregaria
+/// nenhum dado próprio, só o mesmo `exercicioSessaoId` que já está aqui.
+model RegistroSerie {
+  id                String @id @default(uuid())
+  registroTreinoId  String
+  /// FK para o exercício PRESCRITO — é por ele que se chega ao nome, ao grupo
+  /// muscular e ao exercício do catálogo, sem copiar nada.
+  exercicioSessaoId String
+  /// Qual série do exercício, começando em 0. É o que preserva a ordem em que
+  /// as cargas caíram.
+  ordem             Int
+  repeticoes        Int
+  /// Nulo em exercício de peso corporal, onde não há carga a informar.
+  pesoKg            Float?
+
+  registroTreino  RegistroTreino  @relation(fields: [registroTreinoId], references: [id], onDelete: Cascade)
+  exercicioSessao ExercicioSessao @relation(fields: [exercicioSessaoId], references: [id], onDelete: Cascade)
+
+  @@index([registroTreinoId])
 }
 
 // ---------------------------------------------------------------------------

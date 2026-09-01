@@ -3,9 +3,8 @@
  * foi prescrito para ele.
  *
  * A prescrição (ficha de treino, ficha de alimentação) já existe no schema e é
- * lida por PlanService.consultar. Hidratação e refeição já têm model; o
- * registro de treino ainda não, e o tipo fica aqui para o service ter um
- * contrato declarado antes da migration.
+ * lida por PlanService.consultar. Hidratação, refeição e treino têm cada uma o
+ * seu model e o seu par de tipos aqui.
  */
 
 export interface RegistroRefeicao {
@@ -96,16 +95,64 @@ export interface RegistroTreino {
     /** FK para SessaoTreino (a sessão prescrita que foi executada). */
     sessaoTreinoId: string;
     iniciadoEm: Date;
+    /** Nulo enquanto o treino está em andamento. */
     concluidoEm: Date | null;
 }
 
-export interface RegistroExercicio {
-    id: string;
-    registroTreinoId: string;
-    /** FK para ExercicioSessao (o exercício prescrito). */
+/**
+ * Uma série executada, como o app a envia ao concluir o treino.
+ *
+ * `ordem` é o índice da série dentro do exercício, começando em 0 — é o que
+ * distingue a primeira da terceira quando a carga cai no meio.
+ */
+export interface SerieExecutada {
     exercicioSessaoId: string;
-    seriesFeitas: number;
+    ordem: number;
+    repeticoes: number;
     pesoKg: number | null;
+}
+
+/**
+ * O treino concluído com tudo que a tela de resumo precisa.
+ *
+ * `totalSeries` e `volumeKg` são SOMADOS NO SERVIDOR, e não no app, pela mesma
+ * razão que `ResumoRefeicoesDia.consumido`: quem lê o histórico de uma semana
+ * atrás não tem em mãos as séries daquele dia para refazer a conta, e duas
+ * implementações da mesma soma divergem.
+ */
+export interface TreinoConcluido {
+    id: string;
+    sessaoTreinoId: string;
+    /** Nome da sessão prescrita ("Upper", "Push") — vem do JOIN. */
+    sessaoNome: string;
+    iniciadoEm: Date;
+    concluidoEm: Date;
+    /** Do início à conclusão. É o cronômetro que a tela mostrou. */
+    duracaoSegundos: number;
+    totalSeries: number;
+    /** Σ peso × repetições de cada série. Zero se nada teve carga. */
+    volumeKg: number;
+    series: SerieExecutada[];
+}
+
+/**
+ * O contrato das rotas de treino — abrir, concluir e consultar devolvem o
+ * PERÍODO inteiro, no mesmo espírito de ResumoHidratacaoDia.
+ *
+ * O período é a SEMANA, e não o dia: a TreinoScreen mostra um card por dia da
+ * semana e marca os que já foram feitos, então a pergunta que o app faz é "o
+ * que já fiz nesta semana".
+ *
+ * NÃO existe um campo `sessoesFeitas: string[]`: seria derivável de `treinos` e
+ * as duas cópias poderiam divergir — mesma decisão de `refeicoesFeitas`. O app
+ * monta o conjunto com `new Set(treinos.map((t) => t.sessaoTreinoId))`.
+ */
+export interface ResumoTreinosPeriodo {
+    /** "AAAA-MM-DD" no fuso do usuário — ver config/fuso.ts. */
+    de: string;
+    /** Inclusivo, ao contrário do `ate` exclusivo de `Periodo`. */
+    ate: string;
+    treinos: TreinoConcluido[];
 }
 
 /** Intervalo de consulta de histórico. */

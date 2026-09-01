@@ -92,6 +92,9 @@ describe("app (smoke)", () => {
                 "POST /api/refeicao",
                 "GET /api/refeicao",
                 "DELETE /api/refeicao/:refeicaoId",
+                "POST /api/treino",
+                "POST /api/treino/:registroTreinoId/concluir",
+                "GET /api/treino",
             ]),
         );
     });
@@ -107,6 +110,9 @@ describe("app (smoke)", () => {
             ["post", "/api/refeicao"],
             ["get", "/api/refeicao"],
             ["delete", "/api/refeicao/refeicao-1"],
+            ["post", "/api/treino"],
+            ["post", "/api/treino/treino-1/concluir"],
+            ["get", "/api/treino"],
         ])("devolve 401 em %s %s sem token", async (metodo, rota) => {
             const resposta = await (request(app) as any)[metodo](rota);
 
@@ -256,6 +262,46 @@ describe("app (smoke)", () => {
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);
+        });
+    });
+
+    describe("treino", () => {
+        // Também rodam antes do Prisma: o sessaoTreinoId ausente é recusado na
+        // primeira linha do service, e o período malformado no controller.
+        it("devolve 400 ao abrir sem sessaoTreinoId", async () => {
+            const resposta = await request(app)
+                .post("/api/treino")
+                .set("Authorization", TOKEN)
+                .send({});
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/sessaoTreinoId/i);
+        });
+
+        it("devolve 400 quando só um lado do período vem", async () => {
+            const resposta = await request(app)
+                .get("/api/treino?de=2026-08-01")
+                .set("Authorization", TOKEN);
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/juntos/i);
+        });
+
+        it("devolve 400 quando o período não é AAAA-MM-DD", async () => {
+            const resposta = await request(app)
+                .get("/api/treino?de=01/08/2026&ate=07/08/2026")
+                .set("Authorization", TOKEN);
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/AAAA-MM-DD/);
+        });
+
+        it("devolve 400 quando ate é anterior a de", async () => {
+            const resposta = await request(app)
+                .get("/api/treino?de=2026-08-10&ate=2026-08-01")
+                .set("Authorization", TOKEN);
+
+            expect(resposta.status).toBe(400);
         });
     });
 

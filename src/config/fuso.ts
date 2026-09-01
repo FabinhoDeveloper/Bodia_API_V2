@@ -68,6 +68,31 @@ export function janelaDoDia(instante: Date): Periodo {
     return { de, ate: new Date(de.getTime() + MS_POR_DIA) };
 }
 
+/**
+ * O intervalo UTC da SEMANA local em que `instante` cai, de segunda a domingo.
+ *
+ * Existe porque o treino é prescrito por semana: a `TreinoScreen` mostra um card
+ * por dia da semana e marca os que já foram feitos, então a pergunta que o app
+ * faz não é "o que fiz hoje" (como na água e na refeição) e sim "o que já fiz
+ * nesta semana".
+ *
+ * A semana começa na SEGUNDA porque é assim que `DIAS_POR_QUANTIDADE` distribui
+ * o treino — um split de 4 dias cai em Segunda, Terça, Quinta e Sexta. Começar
+ * no domingo, como faz `Date.getDay()`, partiria a semana de treino ao meio.
+ *
+ * `ate` é exclusivo, mesma regra de `janelaDoDia`.
+ */
+export function janelaDaSemana(instante: Date): Periodo {
+    const hoje = janelaDoDia(instante);
+    // getUTCDay sobre o relógio local: 0 = domingo. Deslocado para 0 = segunda,
+    // que é quanto a semana já andou.
+    const diasDesdeSegunda = (comoRelogioLocal(instante).getUTCDay() + 6) % 7;
+
+    const de = new Date(hoje.de.getTime() - diasDesdeSegunda * MS_POR_DIA);
+
+    return { de, ate: new Date(de.getTime() + 7 * MS_POR_DIA) };
+}
+
 /** O dia local de um instante, em "AAAA-MM-DD" — é o que o app exibe. */
 export function diaISO(instante: Date): string {
     return comoRelogioLocal(instante).toISOString().slice(0, 10);

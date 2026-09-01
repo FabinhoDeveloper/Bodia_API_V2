@@ -1,4 +1,4 @@
-import { diaISO, interpretarDia, janelaDoDia } from "../../src/config/fuso";
+import { diaISO, interpretarDia, janelaDaSemana, janelaDoDia } from "../../src/config/fuso";
 
 /**
  * O motivo destes testes existirem: o servidor roda em UTC e o usuário não.
@@ -6,6 +6,47 @@ import { diaISO, interpretarDia, janelaDoDia } from "../../src/config/fuso";
  * seguinte — que é exatamente o bug que este módulo evita.
  */
 describe("fuso", () => {
+    // A semana existe porque o treino é prescrito por semana: a tela mostra um
+    // card por dia e marca os feitos. Começar no domingo, como `getDay()`,
+    // partiria ao meio a semana de treino de quem treina segunda a sexta.
+    describe("janelaDaSemana", () => {
+        it("começa na segunda-feira, às 03:00Z", () => {
+            // 2026-08-19 é uma quarta-feira.
+            const { de, ate } = janelaDaSemana(new Date("2026-08-19T15:00:00.000Z"));
+
+            expect(de.toISOString()).toBe("2026-08-17T03:00:00.000Z");
+            expect(ate.toISOString()).toBe("2026-08-24T03:00:00.000Z");
+        });
+
+        it("mantém o DOMINGO na semana que acabou, e não na que começa", () => {
+            // 2026-08-23 é domingo: pertence à semana aberta em 17/08.
+            const { de } = janelaDaSemana(new Date("2026-08-23T15:00:00.000Z"));
+
+            expect(de.toISOString()).toBe("2026-08-17T03:00:00.000Z");
+        });
+
+        it("dá a mesma janela para qualquer dia da mesma semana", () => {
+            const segunda = janelaDaSemana(new Date("2026-08-17T15:00:00.000Z"));
+            const domingo = janelaDaSemana(new Date("2026-08-23T15:00:00.000Z"));
+
+            expect(segunda).toEqual(domingo);
+        });
+
+        it("cobre exatamente sete dias", () => {
+            const { de, ate } = janelaDaSemana(new Date("2026-08-19T15:00:00.000Z"));
+
+            expect(ate.getTime() - de.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+        });
+
+        // A segunda-feira 00:30 em Brasília é 03:30Z da SEGUNDA — se o corte
+        // usasse o dia UTC, o treino cairia na semana anterior.
+        it("põe o treino da madrugada de segunda na semana que começa", () => {
+            const { de } = janelaDaSemana(new Date("2026-08-17T03:30:00.000Z"));
+
+            expect(de.toISOString()).toBe("2026-08-17T03:00:00.000Z");
+        });
+    });
+
     describe("janelaDoDia", () => {
         it("abre o dia às 03:00Z, que é a meia-noite de Brasília", () => {
             const { de, ate } = janelaDoDia(new Date("2026-08-19T15:00:00.000Z"));
