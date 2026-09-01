@@ -1,6 +1,6 @@
 # BodIA — Backend
 
-API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **jsonwebtoken** reservado para quando a sessão real entrar. Hoje a API gera o plano (motor determinístico + IA), persiste o cadastro, devolve o plano ao app e registra a hidratação e as refeições do dia — **ainda não há JWT nem validação campo a campo do payload**.
+API do BodIA. Stack: **TypeScript + Express + Prisma 6** (PostgreSQL), com **bcrypt** para hash de senha e **JWT** para a sessão. A API gera o plano (motor determinístico + IA), persiste o cadastro, devolve o plano ao app, registra hidratação, refeições, treinos executados e peso, edita o perfil, regenera o plano e exclui a conta. **Toda rota que toca dado de usuário exige `Authorization: Bearer`** — o `usuarioId` sai do token, nunca do payload nem da URL.
 
 Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** — não introduzir um estilo diferente (ex.: lógica direto no controller, um ORM alternativo, um container de DI) sem alinhar antes.
 
@@ -10,7 +10,8 @@ Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** —
 - **Express 4** — HTTP layer
 - **Prisma 6** — ORM, PostgreSQL como banco (`docker-compose.yml` sobe um Postgres local)
 - **bcrypt** — hash de senha, usado por `auth.service`
-- **jsonwebtoken** — emissão/validação de token (reservado para quando existir auth)
+- **jsonwebtoken** — emissão e validação do token de sessão (`config/jwt.ts` + `middlewares/autenticacao.ts`)
+- **helmet**, **express-rate-limit** — cabeçalhos de segurança e limite por IP (RNF11)
 - **cors**, **dotenv** — infraestrutura básica de app
 - **Jest** (`ts-jest`) — testes
 - **supertest** — testes de rota (`tests/app.smoke.test.ts`)
@@ -68,17 +69,15 @@ Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que pre
 | Service | Domínio | Estado |
 |---|---|---|
 | `engine.service.ts` | motor determinístico: TMB, TDEE, meta calórica, macros, split | pronto |
-| `auth.service.ts` | login e hash de senha | pronto (sem JWT) |
-| `user.service.ts` | cadastro; futuramente atualização, exclusão e perfil | cadastro pronto |
-| `plan.service.ts` | gerar, consultar e (via user) persistir o plano | pronto |
+| `auth.service.ts` | login, hash de senha, emissão do token | pronto |
+| `user.service.ts` | cadastro, perfil, peso + recálculo, exclusão de conta | pronto |
+| `plan.service.ts` | gerar, consultar, regenerar o plano | pronto |
 | `ai.service.ts` | comunicação com a IA: envia prompt, devolve resposta | pronto |
 | `refeicao.service.ts` | registro/histórico de refeições | pronto |
 | `hidratacao.service.ts` | registro/histórico de hidratação | pronto |
-| `treino.service.ts` | registro de treino e exercícios | **esqueleto** |
+| `treino.service.ts` | treino executado: abrir, concluir, consultar | pronto |
 
-Só `treino.service` ainda é esqueleto: lança `"não implementado"` e **não tem rota**, porque depende de models que ainda não existem no `schema.prisma`. O que falta está no cabeçalho do arquivo.
-
-`hidratacao` e `refeicao` já percorreram o caminho (model → migration → repository → controller → rota) — é o roteiro do que sobrou.
+Os oito estão implementados. O `treino.service` foi o último a sair do esqueleto e percorreu o mesmo caminho que `hidratacao` e `refeicao` já haviam percorrido — model → migration → repository → service → controller → rota → serviço no mobile.
 
 ### O que entra em `services/`
 
@@ -99,7 +98,9 @@ A regra prática: **se a classe não é chamada direto por um controller, provav
 
 Faz a ponte HTTP ↔ Service: lê `req`, chama o Service, escreve `res`. Não contém regra de negócio. Métodos que viram handler de rota são **arrow function properties** (garante o `this` correto quando passados direto pro Express, sem precisar de `.bind`).
 
-Um controller por service que tem rota — hoje `auth`, `user` e `plan`.
+Um controller por service que tem rota — `auth`, `user`, `plan`, `hidratacao`, `refeicao` e `treino`.
+
+O `usuarioId` vem sempre de `usuarioAutenticado(req)` (`middlewares/autenticacao.ts`), nunca de `req.body` nem de `req.params`. A função existe porque `Express.Request.usuarioId` é opcional: sem ela, cada controller precisaria de um `!`, e um `!` errado manda `undefined` para o `where` do Prisma, que não acha nada e devolve 404 em vez de acusar o problema.
 
 ```ts
 // src/controllers/plan.controller.ts
@@ -175,11 +176,13 @@ npm test              # roda tudo em tests/**/*.test.ts
 
 Convenção de teste: `describe` pelo nome da classe, `it`/`it.each` descrevendo o comportamento em português, um arquivo de teste por classe, mesmo nome (`<arquivo>.test.ts`).
 
+`tests/setup.ts` roda **antes de qualquer módulo ser importado** (`setupFiles`). Existe porque `config/jwt.ts` lê `JWT_SECRET` no momento em que é carregado, e definir a variável dentro de um `beforeAll` seria tarde demais — o import já teria acontecido.
+
 **`tests/app.smoke.test.ts` é o único que exercita o app inteiro** — `app.ts`, a composição de dependências dos arquivos de rota, o `errorHandler` e o `notFoundHandler`. Os demais são unitários com fakes e, por isso, não pegam erro de wiring: um refactor pode compilar, passar em todos eles e ainda assim quebrar todos os endpoints.
 
 Ele não toca no banco — as rotas que cobre ou não usam Prisma, ou falham na validação antes de chegar nele. Para as que precisam de banco, ele percorre o router do Express e confere que a rota continua **registrada**; a ausência de uma rota é detectável mesmo sem poder chamá-la.
 
-**Ao adicionar uma rota, acrescente-a à lista desse teste.**
+**Ao adicionar uma rota, acrescente-a à lista desse teste** — e, se ela for autenticada, ao `it.each` que confere o **401 sem token**. A rota que perde o middleware num refactor continua respondendo 200 em todo teste unitário; só ali o buraco aparece.
 
 ## Estrutura de pastas
 
@@ -196,6 +199,7 @@ backend/
     types/                    # interfaces compartilhadas — nenhuma classe
       perfil.types.ts  plano.types.ts  auth.types.ts
       registro.types.ts  benchmark.types.ts
+      express.d.ts            # req.usuarioId, preenchido pelo middleware
     services/                 # OITO, um por domínio
       engine.service.ts       # motor determinístico (puro)
       auth.service.ts         # login + hash de senha
@@ -215,7 +219,9 @@ backend/
     mappers/
       plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
       meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
-      perfil.mapper.ts        # string do app -> enum do Prisma
+      perfil.mapper.ts        # string do app <-> enum do Prisma (ida e volta)
+      ficha.mapper.ts         # plano -> as duas fichas (cadastro E regeneração)
+      conferencia.mapper.ts   # validadores -> o que a tela de revisão mostra
     prompts/
       dieta-selecao.prompt.ts      # chamada 1: quais alimentos, sem gramas
       dieta-quantidades.prompt.ts  # chamada 2: gramas dos já escolhidos
@@ -224,14 +230,14 @@ backend/
       prompt.types.ts              # o par { system, user }
       catalogo.filter.ts           # aplica as restrições ANTES do prompt
     repositories/
-      user.repository.ts      plan.repository.ts
-      hidratacao.repository.ts  refeicao.repository.ts
+      user.repository.ts      plan.repository.ts      peso.repository.ts
+      hidratacao.repository.ts  refeicao.repository.ts  treino.repository.ts
     controllers/
       auth.controller.ts      user.controller.ts      plan.controller.ts
-      hidratacao.controller.ts  refeicao.controller.ts
+      hidratacao.controller.ts  refeicao.controller.ts  treino.controller.ts
     routes/
       auth.routes.ts  user.routes.ts  plan.routes.ts
-      hidratacao.routes.ts  refeicao.routes.ts
+      hidratacao.routes.ts  refeicao.routes.ts  treino.routes.ts
       index.ts                # agrega os routers, montado em /api
     benchmark/                # endpoint TEMPORÁRIO, isolado
       benchmark.service.ts    benchmark.controller.ts   benchmark.routes.ts
@@ -242,9 +248,13 @@ backend/
       alimentos.ts            # GERADO por scripts/importar-taco.ts — não editar
       exercicios.ts           # catálogo escrito à mão
       volume-treino.ts        # limites e política de volume (primário/secundário)
+      limites-seguranca.ts    # pisos e tetos dos cálculos (RF17)
+      hidratacao.ts           # ml por kg por nível de atividade
+      descanso-treino.ts      # intervalo de descanso por exercício
       plano-simulado.ts       # fixture usado quando SIMULAR_IA=true
     middlewares/
       error-handler.ts        not-found-handler.ts
+      autenticacao.ts         # exige o Bearer e injeta req.usuarioId
     app.ts                    # cria o express app, registra middlewares/rotas
     server.ts                 # bootstrap: carrega .env e sobe o listener
   scripts/
@@ -253,6 +263,7 @@ backend/
   .github/workflows/
     deploy.yml                # esteira: build + testes -> SSH -> PM2
   tests/                      # espelha src/, só arquivos *.test.ts
+    setup.ts                  # env que os módulos de config leem na CARGA
   docker-compose.yml          # Postgres local (bodia/bodia/bodia, porta 5432)
   jest.config.js / tsconfig.jest.json
   .env / .env.example
@@ -362,7 +373,20 @@ Se a lógica nova é tradução de formato, construção de prompt ou uma estrat
 
 `src/services/engine.service.ts` implementa os cálculos exigidos pela fundamentação teórica: TMB (Mifflin-St Jeor), TDEE (fator de atividade), meta calórica por objetivo, distribuição de macronutrientes e estrutura de treino (split/frequência/volume por sessão). É um Service **sem Repository** (puro, não toca banco) — recebe `PerfilInput` e devolve `ResultadoCalculo`. Testado em `tests/services/engine.service.test.ts`.
 
-Consumido por `plan.service` (gerar), `user.service` (recalcular no cadastro) e pelo benchmark. Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
+Consumido por `plan.service` (gerar e regenerar), `user.service` (cadastro, registro de peso e edição de perfil) e pelo benchmark. Regra da arquitetura, vinda da fundamentação teórica: **todo número sai daqui**. O LLM só redige em cima destes valores — nunca calcula.
+
+### Limites de segurança (RF17) — `data/limites-seguranca.ts`
+
+São aplicados em duas frentes, e as duas são necessárias:
+
+- **Na entrada**, o `validarPerfil` recusa peso, altura e idade fora de faixas plausíveis. Não é julgamento sobre corpo nenhum: é o intervalo fora do qual o valor certamente é erro de digitação ou de unidade (1,75 em vez de 175 cm), e um deles sozinho contamina TMB, meta calórica, macros e hidratação de uma vez.
+- **Na saída**, dois pisos aparam a meta calórica e um teto apara a proteína. Um perfil perfeitamente plausível ainda produz uma meta baixa demais depois do déficit: num usuário sedentário o TDEE é só 1,2× a TMB, e o déficit de 20% já prescreve menos energia do que o corpo gasta em repouso.
+
+Os pisos são dois, e o maior vence, porque cada um cobre o que o outro deixa passar: `KCAL_MIN_ABSOLUTO` protege quem é pequeno o bastante para que uma fração da TMB ainda seja pouco; `FATOR_MIN_SOBRE_TMB` protege quem é grande o bastante para que 1500 kcal continuem sendo um déficit extremo.
+
+O teto de proteína (`PROTEINA_MAX_FRACAO_KCAL`) existe porque, sem ele, um perfil pesado com objetivo de perda fazia proteína e gordura estourarem a meta sozinhas — e o `calcularMacros` **lançava**, transformando um caso extremo em falha de geração em vez de um plano seguro.
+
+As constantes são **exportadas**, e não números soltos dentro da função que os aplica, pela mesma razão dos limites de `volume-treino.ts`: um limite que só existe dentro da função não pode ser conferido por um teste nem citado por outra camada, e foi exatamente assim que a contradição do volume passou despercebida.
 
 ### Distribuição por refeição
 
@@ -473,7 +497,9 @@ A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
 7. **Volume de treino**: `validador-volume` soma as séries por grupo a partir dos exercícios escolhidos e compara com o orçamento do motor, tolerando uma série de diferença (arredondamento legítimo). Também acusa grupo treinado fora do orçamento. Era o irmão que faltava — a dieta tinha os números conferidos e o treino não tinha nada.
 
-Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa só mede.
+8. **O desvio chega ao app**: `conferencia.mapper` traduz a saída dos dois validadores no formato da tela, e o `POST /api/onboarding` a devolve junto do plano (RF22). Medir sem mostrar não fechava o requisito — até então os dois validadores rodavam e o resultado ia apenas para o `console.log` do servidor.
+
+Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa MEDE e REPORTA. E o desvio, medido, **está estourando**: ver "Próximos passos".
 
 ### `ai.service.ts` e a configuração
 
@@ -508,36 +534,81 @@ O `AbortSignal` por requisição continua necessário porque o `timeout` do SDK 
 
 Nos testes o `ai.service` é **sempre** substituído por um fake — chamada real gastaria crédito e deixaria a suíte dependente de rede. O fake responde **por etapa**, e não por ordem de chamada: dieta e treino rodam em `Promise.all`, então a ordem de chegada não é determinística.
 
-### Latência
+### Latência — medida (RNF02)
 
-A chamada única na DeepSeek levava **~2 minutos** (≈19,5k tokens de entrada + ~8k de raciocínio) e era o motivo de `SIMULAR_IA` existir. A divisão em três ataca justamente isso, mas o número real **ainda não foi medido** — use `GET /api/teste-geracao`.
+A chamada única na DeepSeek levava **~2 minutos** e era o motivo de `SIMULAR_IA` existir. A divisão em três atacou exatamente isso, e o número agora foi medido com chave de verdade:
 
-Como ler o benchmark: ele roda as trilhas em **paralelo, como produção**, então `tempo.total_ms` é o wall clock que o app veria (`max(dieta, treino)`) e é ele que decide se o modelo cabe. A soma das `etapas` é maior que o total, de propósito — cada etapa responde *onde* o tempo é gasto, não *quanto* o usuário espera. O custo por chamada individual sai nos logs `[ia:<etapa>]`.
+| modelo | wall clock | trilha dieta | trilha treino |
+|---|---|---|---|
+| `gpt-4o-mini` | **6,6 s** | 6,6 s | 6,2 s |
+| `gpt-5` | **22,5 s** | 9,2 s | 22,5 s |
+
+O RNF02 pede 15 s: **`gpt-4o-mini` atende, `gpt-5` não**.
+
+**A escolha atual é `gpt-5`, deliberada** — não é `.env` esquecido. A consequência é que o RNF02 fica em não conformidade conhecida: ou o requisito é revisado no documento para o tempo medido, ou o modelo muda antes da entrega. Trocar é editar uma linha do `.env`; nada no código depende do nome do modelo (ver `ehModeloDeRaciocinio()` em `config/ia.ts`, que ajusta os parâmetros sozinho).
+
+Como ler: as trilhas rodam em **paralelo, como em produção**, então `total_ms` é o wall clock que o app veria — `max(dieta, treino)` — e é ele que decide se o modelo cabe. A soma das etapas é maior que o total de propósito: cada etapa responde *onde* o tempo é gasto, não *quanto* o usuário espera.
+
+O resultado contraria a intuição de que a seleção de alimentos seria o gargalo por ser o maior prompt (~17k caracteres): ela é a etapa **mais rápida** (2–3,6 s). Quem domina é o treino, e no `gpt-5` por causa dos tokens de raciocínio. Se o `gpt-5` for necessário por qualidade, é o `treino.prompt` que precisa encolher.
+
+Para reproduzir sem mexer no `.env` (o `dotenv` não sobrescreve variável já definida no shell):
+
+```bash
+IA_MODEL=gpt-4o-mini npx tsx scripts/bench-modelo.ts
+```
 
 O timeout do axios no mobile é de 210s. O teto por chamada é 60s (chat) ou 90s (raciocínio) — ver a tabela em "`ai.service.ts` e a configuração".
 
 ## Endpoints
 
+Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usuarioId` sai do token, e por isso não aparece em nenhuma URL.
+
+### Público
+
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
 | `GET` | `/` | → **200** `{ message, commit, iniciadoEm }`. Marca da versão no ar: `commit` vem de `GIT_COMMIT` (exportada pelo `deploy.sh`) e `iniciadoEm` é o boot do processo. É o `curl` que confirma **qual** versão o deploy publicou. | — |
-| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano }` com metas, treino e dieta prontos para a tela. Nada é persistido. `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
-| `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ usuarioId }`. Grava usuário, peso, restrições e as duas fichas numa transação. | **400** sem perfil ou sem plano; **409** e-mail já cadastrado |
-| `POST` | `/api/login` | `{ email, senha }` → **200** `{ usuarioId, nome, sobrenome, email }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
-| `GET` | `/api/plano/:usuarioId` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário inexistente ou sem plano ativo |
-| `POST` | `/api/hidratacao` | `{ usuarioId, volumeMl }` → **201** `{ dia, totalMl, metaMl, registros }`. Registra água e devolve o dia já somado. | **400** volumeMl fora de 1–5000 ou não inteiro; **404** usuário sem plano ativo |
-| `GET` | `/api/hidratacao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
-| `DELETE` | `/api/hidratacao/:usuarioId/:registroId` | Desfaz um registro → **200** mesmo formato | **404** registro inexistente **ou de outro usuário** |
-| `POST` | `/api/refeicao` | `{ usuarioId, refeicaoId }` → **201** `{ dia, registros, consumido, metas, totalRefeicoes }`. **Idempotente**: marcar de novo no mesmo dia não duplica. | **400** sem refeicaoId; **404** sem plano ativo, ou refeição que não é do usuário |
-| `GET` | `/api/refeicao/:usuarioId` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** usuário sem plano ativo |
-| `DELETE` | `/api/refeicao/:usuarioId/:refeicaoId` | Desmarca a de hoje → **200** mesmo formato | **404** não está marcada hoje **ou é de outro usuário** |
-| `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve o tempo **de cada etapa** e a validação. Ignora `SIMULAR_IA` de propósito. Os tokens saem nos logs `[ia:<etapa>]`. | devolve `success: false` no corpo em vez de lançar |
+| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano, conferencia }`. Nada é persistido — é o plano que o usuário revisa antes de decidir. `conferencia` traz o desvio medido pelos dois validadores (RF22). `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
+| `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ token, usuario }`. Grava usuário, peso, restrições e as duas fichas numa transação, e **já devolve a sessão aberta**. `conta.aceiteTermos` precisa ser `true` (RF36). | **400** payload inválido ou sem aceite; **409** e-mail já cadastrado |
+| `POST` | `/api/login` | `{ email, senha }` → **200** `{ token, usuario }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
+| `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve o tempo de cada trilha e a validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
 
-O onboarding é instantâneo com `SIMULAR_IA=true` (padrão). Com `SIMULAR_IA=false` são três chamadas à IA — ver "Latência".
+`/api/login` e `/api/cadastro` têm limite estreito de tentativas por IP — ver `config/seguranca.ts`.
 
-O `usuarioId` na URL do plano é limitação conhecida: sem JWT, quem descobrir um id lê o plano alheio. Sai quando a autenticação real entrar.
+### Plano — autenticado
 
-Nas rotas de hidratação o mesmo buraco é **pior**, porque ali não se lê: se **escreve e se apaga** no histórico alheio. O `usuarioId` no path do `DELETE` não é decoração — é ele que o repository usa no `where` para impedir que um registroId sozinho apague linha de outra pessoa. Registro inexistente e registro alheio devolvem os dois **404**, nunca 403: um 403 confirmaria a existência do registro do outro.
+| Método | Rota | Corpo / Resposta | Erros |
+|---|---|---|---|
+| `GET` | `/api/plano` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário sem plano ativo |
+| `POST` | `/api/plano/regenerar` | → **200** o plano novo, já gravado (RF20). O perfil vem do BANCO, não do payload: pedir outro cardápio não é ocasião para o app reenviar sexo, altura e objetivo. A ficha anterior é desativada, nunca apagada. | **404** usuário sem perfil; **500** se a IA falhar |
+
+### Perfil, peso e conta — autenticado
+
+| Método | Rota | Corpo / Resposta | Erros |
+|---|---|---|---|
+| `GET` | `/api/perfil` | → **200** o perfil no vocabulário da API (RF10) | **404** usuário inexistente |
+| `PATCH` | `/api/perfil` | Só os campos que mudaram → **200** `{ perfil, recalculado, metas, planoDesatualizado }`. Campo ausente é campo NÃO alterado — daí PATCH e não PUT. `recalculado` é `false` quando o usuário mexeu só nas restrições (FA02 do UC06). | **400** campo inválido |
+| `POST` | `/api/peso` | `{ pesoKg }` → **201** `{ historico, metas, planoDesatualizado }`. Grava o peso E recalcula TMB, GET, meta calórica, macros e água na ficha ativa (RF33 + RF34), na mesma chamada. | **400** pesoKg fora de 25–400 |
+| `GET` | `/api/peso` | → **200** mesmo formato, sem gravar nada | **404** usuário inexistente |
+| `DELETE` | `/api/conta` | `{ senha }` → **204**. Apaga tudo em cascata (RF35, LGPD). Exige a senha **além** do token: a exclusão é irreversível, e o token sozinho tornaria um aparelho desbloqueado por alguns segundos suficiente para destruir o histórico de alguém. | **401** senha incorreta |
+
+### Registros do dia a dia — autenticado
+
+| Método | Rota | Corpo / Resposta | Erros |
+|---|---|---|---|
+| `POST` | `/api/hidratacao` | `{ volumeMl }` → **201** `{ dia, totalMl, metaMl, registros }` | **400** volumeMl fora de 1–5000; **404** sem plano ativo |
+| `GET` | `/api/hidratacao` | `?dia=AAAA-MM-DD` opcional (default hoje) → **200** mesmo formato | **400** dia mal formatado; **404** sem plano ativo |
+| `DELETE` | `/api/hidratacao/:registroId` | Desfaz um registro → **200** mesmo formato | **404** registro inexistente **ou de outro usuário** |
+| `POST` | `/api/refeicao` | `{ refeicaoId }` → **201** `{ dia, registros, consumido, metas, totalRefeicoes }`. **Idempotente**. | **400** sem refeicaoId; **404** sem plano ativo, ou refeição de outro usuário |
+| `GET` | `/api/refeicao` | `?dia=AAAA-MM-DD` opcional → **200** mesmo formato | **400** dia mal formatado; **404** sem plano ativo |
+| `DELETE` | `/api/refeicao/:refeicaoId` | Desmarca a de hoje → **200** mesmo formato | **404** não está marcada hoje **ou é de outro usuário** |
+| `POST` | `/api/treino` | `{ sessaoTreinoId }` → **201** o treino aberto. **Idempotente**: reabrir a mesma sessão devolve o que já estava aberto. | **400** sem sessaoTreinoId; **404** sessão de outro usuário |
+| `POST` | `/api/treino/:registroTreinoId/concluir` | `{ series: [{ exercicioSessaoId, ordem, repeticoes, pesoKg }] }` → **200** `{ de, ate, treinos }`, a semana inteira. Grava a carga em `CargaExercicio` (RF25). | **400** série malformada; **404** treino ou exercício de outro usuário |
+| `GET` | `/api/treino` | Sem parâmetros: a semana corrente (os cards da tela). Com `?de=&ate=` (AAAA-MM-DD, `ate` inclusivo): o histórico (RF27). | **400** período mal formatado |
+
+### Por que o treino é da SEMANA e os outros são do DIA
+
+Água e refeição respondem "o que fiz hoje"; treino responde "o que já fiz nesta semana". A diferença não é estilo: a prescrição de treino é semanal, e a `TreinoScreen` mostra um card por dia da semana com os feitos marcados. `janelaDaSemana` (`config/fuso.ts`) começa na **segunda**, e não no domingo como `Date.getDay()`, porque é assim que `DIAS_POR_QUANTIDADE` distribui o treino — um split de 4 dias cai em Segunda, Terça, Quinta e Sexta, e começar no domingo partiria a semana ao meio.
 
 ### Refeição é toggle, hidratação é log
 
@@ -570,14 +641,29 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 
 ## Próximos passos
 
-- **Auth real**: JWT em `auth.service` (o `jsonwebtoken` já está instalado) e o `usuarioId` saindo da URL do plano.
-- **Validação campo a campo do payload** — hoje só o perfil é validado, dentro do `engine.service`.
-- **Medir a latência real**: a divisão em três chamadas foi feita para atacá-la, mas o número ainda não foi medido com chave de verdade. `GET /api/teste-geracao` reporta etapa a etapa. Se continuar alta, a chamada de seleção é a maior (~17k caracteres) e o caminho é classificar a TACO por refeição, filtrando por código.
+- **O desvio dos macros está fora da tolerância, e isso é medido.** Numa geração real com `gpt-4o-mini` a proteína veio **+63,6%** acima da meta (`gpt-5`: +74,7%). Os dois validadores acusam, o desvio chega ao app (RF22) e o plano é entregue assim mesmo — corrigir é o **retry automático** abaixo. O suspeito é o prompt de quantidades: ele recebe as metas da refeição, mas nada o impede de arredondar cada porção para cima.
+- **Retry automático** quando `dentroDoLimite` for `false`: reenviar ao modelo com o desvio medido realimentado no prompt. Hoje a etapa só MEDE. É a evolução prevista em A5 do `Alinhamento_Documento_BodIA.md`.
+- **A escolha do modelo decide o RNF02** (geração em até 15 s). Medido em `scripts/bench-modelo.ts`, mesmo perfil, mesmos prompts:
+
+  | modelo | wall clock | RNF02 |
+  |---|---|---|
+  | `gpt-4o-mini` | **6,6 s** | atende |
+  | `gpt-5` | **22,5 s** | não atende |
+
+  O gargalo do `gpt-5` é a trilha do TREINO (22,5 s contra 9,2 s da dieta), por causa dos tokens de raciocínio. Se o `gpt-5` for necessário por qualidade, é o `treino.prompt` que precisa encolher — não a seleção de alimentos, que é o maior prompt mas a etapa mais rápida.
 - **O padrão brasileiro é instrução, não garantia.** Se voltar a aparecer merluza no café da manhã, ver `padrao-refeicoes.ts` — o conserto estrutural é o filtro por refeição.
-- **Retry automático** quando `dentroDoLimite` for `false` (hoje o desvio é medido, mas nada é feito a respeito).
-- **Registro de treino** (`treino.service`): criar os models no `schema.prisma`, o repository, o controller e as rotas, no mesmo caminho que `hidratacao` e `refeicao` já percorreram. Reusa `config/fuso.ts` para o recorte do dia — não reimplementar a janela.
-- **Escrita sem autenticação**: as rotas de hidratação e refeição aceitam o `usuarioId` do payload/URL. Enquanto não houver JWT, qualquer um que descubra um id grava e apaga no histórico daquela pessoa.
 - **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
-- **Fundamentar `FRACAO_SECUNDARIO`**: a distinção primário/secundário e o argumento do estímulo indireto dos compostos ainda não têm citação. Ver o comentário em `src/data/volume-treino.ts`.
-- **`ultimoPesoKg` na tabela errada**: o campo vive em `ExercicioSessao`, que pertence à ficha. Gerar plano novo cria ficha nova com o campo nulo, e o usuário perde a carga de todos os exercícios. A carga é atributo do par (usuário, exercício do catálogo) — precisa mudar de lugar antes de o registro de treino entrar.
-- **Remover `benchmark/`** quando o caminho da IA estabilizar.
+- **Fundamentar as constantes sem citação**: `FRACAO_SECUNDARIO` (`data/volume-treino.ts`), `ML_POR_KG` (`data/hidratacao.ts`) e `KCAL_MIN_ABSOLUTO` (`data/limites-seguranca.ts`). Todas têm o aviso no próprio arquivo. Ver `Fontes_Volume_e_Descanso.md`.
+- **Token sem denylist**: o logout descarta o token no cliente, mas ele continua válido até expirar (`JWT_EXPIRES_IN`, 7 dias por padrão). Invalidar de verdade exige uma lista de revogados consultada a cada requisição — decisão consciente de não pagar esse custo agora. Depois da exclusão de conta o token ainda passa pelo middleware, mas toda rota devolve 404.
+- **Recuperação de senha (RF03) e busca de alimentos (RF24)** não foram implementadas — precisam sair do documento como evolução futura, junto das notificações (RNF23–27) e da persistência offline (RNF14).
+- **Remover `benchmark/` e `scripts/bench-modelo.ts`** quando o desvio dos macros estiver resolvido e o modelo, decidido. Enquanto essas duas perguntas estiverem abertas, é o único instrumento que as mede.
+
+## Cobertura de testes (RNF28)
+
+```bash
+npm run test:cobertura
+```
+
+Mede só o núcleo determinístico — `engine.service` e as tabelas de política em `data/`. Última medição: **97,2% de statements, 91,8% de branches**, com o `engine.service` sozinho em 96,0%. O requisito pede 80%.
+
+O recorte é proposital: o RNF28 fala do MOTOR DETERMINÍSTICO, e diluir a medição no resto do código (controllers, rotas, mappers) daria um número que não responde ao requisito.
