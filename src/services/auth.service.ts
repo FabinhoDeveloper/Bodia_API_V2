@@ -1,8 +1,9 @@
 import bcrypt from "bcrypt";
 
+import { assinarToken } from "../config/jwt";
 import AutenticacaoError from "../errors/autenticacao.error";
 import UserRepository from "../repositories/user.repository";
-import { LoginInput, UsuarioAutenticado } from "../types/auth.types";
+import { LoginInput, SessaoIniciada } from "../types/auth.types";
 
 /**
  * Tudo que é autenticação: login e o hash de senha que o cadastro consome.
@@ -11,10 +12,11 @@ import { LoginInput, UsuarioAutenticado } from "../types/auth.types";
  * fora daqui não há outro consumidor. O custo do bcrypt vem por construtor
  * (src/config/auth.ts), como qualquer outra configuração.
  *
- * A senha em texto nunca sai daqui: quem chama recebe hash ou o usuário
- * autenticado, nunca a senha.
+ * A senha em texto nunca sai daqui: quem chama recebe hash ou a sessão já
+ * iniciada, nunca a senha.
  *
- * É aqui que o JWT entra quando a autenticação de verdade for implementada.
+ * O token é assinado por `config/jwt.ts`, importado direto como o bcrypt — o
+ * segredo fica lá e não passa por este service.
  */
 export default class AuthService {
     private readonly userRepository;
@@ -25,7 +27,14 @@ export default class AuthService {
         this.bcryptRounds = bcryptRounds;
     }
 
-    async entrar({ email, senha }: LoginInput): Promise<UsuarioAutenticado> {
+    async entrar({ email, senha }: LoginInput): Promise<SessaoIniciada> {
+        // Credencial ausente é recusada como credencial errada, não como 400:
+        // sem isto um `email` undefined chegaria ao `where` do Prisma e viraria
+        // 500 — que denuncia mais sobre o servidor do que um 401.
+        if (typeof email !== "string" || typeof senha !== "string") {
+            throw new AutenticacaoError("E-mail ou senha incorretos");
+        }
+
         const usuario = await this.userRepository.buscarPorEmail(email);
 
         // E-mail inexistente e senha errada devolvem exatamente o mesmo erro.
@@ -37,11 +46,30 @@ export default class AuthService {
             throw new AutenticacaoError("E-mail ou senha incorretos");
         }
 
+        return this.abrirSessao(usuario);
+    }
+
+    /**
+     * Emite o token de um usuário já identificado.
+     *
+     * Público porque o CADASTRO também precisa dele: sem token, quem acabou de
+     * criar a conta não conseguiria chamar nenhuma rota autenticada e teria de
+     * digitar a senha que acabou de escolher.
+     */
+    abrirSessao(usuario: {
+        id: string;
+        nome: string;
+        sobrenome: string;
+        email: string;
+    }): SessaoIniciada {
         return {
-            usuarioId: usuario.id,
-            nome: usuario.nome,
-            sobrenome: usuario.sobrenome,
-            email: usuario.email,
+            token: assinarToken(usuario.id),
+            usuario: {
+                usuarioId: usuario.id,
+                nome: usuario.nome,
+                sobrenome: usuario.sobrenome,
+                email: usuario.email,
+            },
         };
     }
 

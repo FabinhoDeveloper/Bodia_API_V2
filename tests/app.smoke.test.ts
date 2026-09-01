@@ -12,8 +12,15 @@ process.env.SIMULAR_IA = "true";
 
 import request from "supertest";
 
+import { assinarToken } from "../src/config/jwt";
+
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const app = require("../src/app").default;
+
+// Token válido de um usuário que não existe no banco. Serve para atravessar o
+// middleware e chegar às validações de payload, que rodam antes do Prisma —
+// é o que mantém este teste sem banco mesmo com as rotas autenticadas.
+const TOKEN = `Bearer ${assinarToken("usuario-de-teste")}`;
 
 const PERFIL_VALIDO = {
     sexo: "M",
@@ -76,16 +83,54 @@ describe("app (smoke)", () => {
                 "POST /api/onboarding",
                 "POST /api/cadastro",
                 "POST /api/login",
-                "GET /api/plano/:usuarioId",
+                "GET /api/plano",
                 "GET /api/teste-geracao",
                 "POST /api/hidratacao",
-                "GET /api/hidratacao/:usuarioId",
-                "DELETE /api/hidratacao/:usuarioId/:registroId",
+                "GET /api/hidratacao",
+                "DELETE /api/hidratacao/:registroId",
                 "POST /api/refeicao",
-                "GET /api/refeicao/:usuarioId",
-                "DELETE /api/refeicao/:usuarioId/:refeicaoId",
+                "GET /api/refeicao",
+                "DELETE /api/refeicao/:refeicaoId",
             ]),
         );
+    });
+
+    // A rota protegida que perde o middleware num refactor continua respondendo
+    // 200 nos testes unitários — só aqui, sem token, o buraco aparece.
+    describe("rotas protegidas", () => {
+        it.each([
+            ["get", "/api/plano"],
+            ["post", "/api/hidratacao"],
+            ["get", "/api/hidratacao"],
+            ["delete", "/api/hidratacao/registro-1"],
+            ["post", "/api/refeicao"],
+            ["get", "/api/refeicao"],
+            ["delete", "/api/refeicao/refeicao-1"],
+        ])("devolve 401 em %s %s sem token", async (metodo, rota) => {
+            const resposta = await (request(app) as any)[metodo](rota);
+
+            expect(resposta.status).toBe(401);
+        });
+
+        it("devolve 401 com token assinado por outro segredo", async () => {
+            // Três segmentos base64 com assinatura inventada: a forma é a de um
+            // JWT, a assinatura não fecha.
+            const falso = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJxdWFscXVlciJ9.assinatura-inventada";
+
+            const resposta = await request(app)
+                .get("/api/plano")
+                .set("Authorization", `Bearer ${falso}`);
+
+            expect(resposta.status).toBe(401);
+        });
+
+        it("devolve 401 quando o esquema não é Bearer", async () => {
+            const resposta = await request(app)
+                .get("/api/plano")
+                .set("Authorization", "Basic dXNlcjpzZW5oYQ==");
+
+            expect(resposta.status).toBe(401);
+        });
     });
 
     it("responde na raiz", async () => {
@@ -148,7 +193,6 @@ describe("app (smoke)", () => {
             expect(item.nome).toBeTruthy();
             expect(item.gramas).toBeGreaterThan(0);
         });
-    });
 
     describe("POST /api/cadastro", () => {
         // Estas validações rodam ANTES de qualquer consulta ao Prisma, então o
@@ -170,6 +214,7 @@ describe("app (smoke)", () => {
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/plano/i);
         });
+
     });
 
     describe("hidratação", () => {
@@ -180,7 +225,8 @@ describe("app (smoke)", () => {
             async (volumeMl) => {
                 const resposta = await request(app)
                     .post("/api/hidratacao")
-                    .send({ usuarioId: "qualquer", volumeMl });
+                    .set("Authorization", TOKEN)
+                    .send({ volumeMl });
 
                 expect(resposta.status).toBe(400);
                 expect(resposta.body.message).toMatch(/volumeMl/i);
@@ -188,7 +234,9 @@ describe("app (smoke)", () => {
         );
 
         it("devolve 400 quando o dia da query não é AAAA-MM-DD", async () => {
-            const resposta = await request(app).get("/api/hidratacao/qualquer?dia=19/08/2026");
+            const resposta = await request(app)
+                .get("/api/hidratacao?dia=19/08/2026")
+                .set("Authorization", TOKEN);
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);
@@ -201,14 +249,17 @@ describe("app (smoke)", () => {
         it("devolve 400 ao marcar sem refeicaoId", async () => {
             const resposta = await request(app)
                 .post("/api/refeicao")
-                .send({ usuarioId: "qualquer" });
+                .set("Authorization", TOKEN)
+                .send({});
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/refeicaoId/i);
         });
 
         it("devolve 400 quando o dia da query não é AAAA-MM-DD", async () => {
-            const resposta = await request(app).get("/api/refeicao/qualquer?dia=ontem");
+            const resposta = await request(app)
+                .get("/api/refeicao?dia=ontem")
+                .set("Authorization", TOKEN);
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);

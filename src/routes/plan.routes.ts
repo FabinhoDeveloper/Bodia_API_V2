@@ -15,6 +15,7 @@ import CatalogoFilter from "../prompts/catalogo.filter";
 import DietaQuantidadesPrompt from "../prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../prompts/treino.prompt";
+import autenticacao from "../middlewares/autenticacao";
 import PlanRepository from "../repositories/plan.repository";
 import AiService from "../services/ai.service";
 import EngineService from "../services/engine.service";
@@ -56,7 +57,10 @@ const planController = new PlanController(
     ),
 );
 
+// Público: gerar o plano acontece ANTES de a conta existir — é o que o usuário
+// vê para decidir se quer se cadastrar.
 router.post("/onboarding", planController.gerar);
-router.get("/plano/:usuarioId", planController.buscar);
+// O usuarioId saiu da URL: quem pede o plano é quem o token diz que é.
+router.get("/plano", autenticacao, planController.buscar);
 
 export default router;

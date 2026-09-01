@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 
+import { usuarioAutenticado } from "../middlewares/autenticacao";
 import PlanService from "../services/plan.service";
 import { OnboardingRequest } from "../types/plano.types";
 
@@ -29,7 +30,14 @@ export default class PlanController {
      */
     buscar = (req: Request, res: Response, next: NextFunction) => {
         this.planService
-            .consultar(req.params.usuarioId)
+            .consultar(usuarioAutenticado(req))
+            .then((plano) => res.json(plano))
+            .catch(next);
+    };
+
+    regenerar = (req: Request, res: Response, next: NextFunction) => {
+        this.planService
+            .regenerar(usuarioAutenticado(req))
             .then((plano) => res.json(plano))
             .catch(next);
     };

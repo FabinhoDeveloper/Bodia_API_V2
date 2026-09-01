@@ -2,16 +2,16 @@ import { NextFunction, Request, Response } from "express";
 
 import { interpretarDia } from "../config/fuso";
 import ValidationError from "../errors/validation.error";
+import { usuarioAutenticado } from "../middlewares/autenticacao";
 import HidratacaoService from "../services/hidratacao.service";
 
 /**
  * Ponte HTTP da hidratação. Sem regra de negócio: a validação do volume e o
  * recorte do dia moram no service.
  *
- * O usuarioId vem do corpo/URL porque ainda não há JWT. É a mesma limitação do
- * GET /api/plano, mas PIOR: lá se lê plano alheio, aqui se ESCREVE e se APAGA
- * no histórico alheio. Some quando a autenticação real entrar e o id passar a
- * sair do token.
+ * O usuarioId sai do TOKEN, nunca do corpo nem da URL. Aqui isso importa mais
+ * que na leitura do plano: um id escolhido pelo cliente permitiria escrever e
+ * apagar no histórico alheio, não só lê-lo.
  */
 export default class HidratacaoController {
     private readonly hidratacaoService;
@@ -22,10 +22,10 @@ export default class HidratacaoController {
 
     // O Express 4 não encaminha rejeições de Promise para o errorHandler sozinho.
     registrar = (req: Request, res: Response, next: NextFunction) => {
-        const { usuarioId, volumeMl } = req.body ?? {};
+        const { volumeMl } = req.body ?? {};
 
         this.hidratacaoService
-            .registrar(usuarioId, volumeMl)
+            .registrar(usuarioAutenticado(req), volumeMl)
             .then((resumo) => res.status(201).json(resumo))
             .catch(next);
     };
@@ -51,14 +51,14 @@ export default class HidratacaoController {
         }
 
         this.hidratacaoService
-            .doDia(req.params.usuarioId, instante)
+            .doDia(usuarioAutenticado(req), instante)
             .then((resumo) => res.json(resumo))
             .catch(next);
     };
 
     remover = (req: Request, res: Response, next: NextFunction) => {
         this.hidratacaoService
-            .remover(req.params.usuarioId, req.params.registroId)
+            .remover(usuarioAutenticado(req), req.params.registroId)
             .then((resumo) => res.json(resumo))
             .catch(next);
     };

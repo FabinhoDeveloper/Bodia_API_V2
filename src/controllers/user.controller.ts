@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 
+import { usuarioAutenticado } from "../middlewares/autenticacao";
 import UserService from "../services/user.service";
 import { CadastroRequest } from "../types/plano.types";
 

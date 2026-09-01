@@ -2,15 +2,16 @@ import { NextFunction, Request, Response } from "express";
 
 import { interpretarDia } from "../config/fuso";
 import ValidationError from "../errors/validation.error";
+import { usuarioAutenticado } from "../middlewares/autenticacao";
 import RefeicaoService from "../services/refeicao.service";
 
 /**
  * Ponte HTTP da refeição registrada. Sem regra de negócio: a posse do
  * refeicaoId, a idempotência e o recorte do dia moram no service.
  *
- * O usuarioId vem do corpo/URL porque ainda não há JWT — mesma limitação já
- * documentada na hidratação: sem token, dá para escrever e apagar no histórico
- * alheio.
+ * O usuarioId sai do TOKEN, como na hidratação. A conferência de posse do
+ * `refeicaoId` continua no service: o token diz quem está pedindo, não que a
+ * refeição pedida seja da ficha dessa pessoa.
  */
 export default class RefeicaoController {
     private readonly refeicaoService;
@@ -21,10 +22,10 @@ export default class RefeicaoController {
 
     // O Express 4 não encaminha rejeições de Promise para o errorHandler sozinho.
     registrar = (req: Request, res: Response, next: NextFunction) => {
-        const { usuarioId, refeicaoId } = req.body ?? {};
+        const { refeicaoId } = req.body ?? {};
 
         this.refeicaoService
-            .registrar(usuarioId, refeicaoId)
+            .registrar(usuarioAutenticado(req), refeicaoId)
             .then((resumo) => res.status(201).json(resumo))
             .catch(next);
     };
@@ -47,14 +48,14 @@ export default class RefeicaoController {
         }
 
         this.refeicaoService
-            .doDia(req.params.usuarioId, instante)
+            .doDia(usuarioAutenticado(req), instante)
             .then((resumo) => res.json(resumo))
             .catch(next);
     };
 
     remover = (req: Request, res: Response, next: NextFunction) => {
         this.refeicaoService
-            .remover(req.params.usuarioId, req.params.refeicaoId)
+            .remover(usuarioAutenticado(req), req.params.refeicaoId)
             .then((resumo) => res.json(resumo))
             .catch(next);
     };

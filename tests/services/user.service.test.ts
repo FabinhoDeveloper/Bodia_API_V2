@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 
+import { lerToken } from "../../src/config/jwt";
 import ConflitoError from "../../src/errors/conflito.error";
 import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
@@ -72,7 +73,15 @@ function cadastroBase(overrides: Partial<CadastroRequest> = {}): CadastroRequest
 function repositoryFake(emailExistente = false) {
     return {
         buscarPorEmail: jest.fn().mockResolvedValue(emailExistente ? { id: "existente" } : null),
-        criar: jest.fn().mockResolvedValue({ id: "usuario-1" }),
+        // O `criar` do Prisma devolve a linha inteira, e o service usa nome,
+        // sobrenome e e-mail para abrir a sessão — um fake só com `id` deixaria
+        // esses campos `undefined` sem nenhum teste acusar.
+        criar: jest.fn().mockResolvedValue({
+            id: "usuario-1",
+            nome: "Ana",
+            sobrenome: "Silva",
+            email: "ana@teste.com",
+        }),
     } as unknown as UserRepository & { buscarPorEmail: jest.Mock; criar: jest.Mock };
 }
 
@@ -97,10 +106,27 @@ describe("UserService", () => {
 
     afterEach(() => logSpy.mockRestore());
 
-    it("devolve o id do usuário criado", async () => {
+    it("devolve o usuário criado", async () => {
         const { service } = montar();
 
-        await expect(service.cadastrar(cadastroBase())).resolves.toEqual({ usuarioId: "usuario-1" });
+        const sessao = await service.cadastrar(cadastroBase());
+
+        expect(sessao.usuario).toEqual({
+            usuarioId: "usuario-1",
+            nome: "Ana",
+            sobrenome: "Silva",
+            email: "ana@teste.com",
+        });
+    });
+
+    // Sem isto o recém-cadastrado teria de fazer login com a senha que acabou
+    // de escolher para conseguir chamar qualquer rota autenticada.
+    it("já devolve a sessão aberta, sem exigir login em seguida", async () => {
+        const { service } = montar();
+
+        const { token } = await service.cadastrar(cadastroBase());
+
+        expect(lerToken(token)).toBe("usuario-1");
     });
 
     it("grava a senha em hash, nunca em texto", async () => {

@@ -1,6 +1,7 @@
 import ConflitoError from "../errors/conflito.error";
 import ValidationError from "../errors/validation.error";
 import UserRepository from "../repositories/user.repository";
+import { SessaoIniciada } from "../types/auth.types";
 import { CadastroRequest } from "../types/plano.types";
 import AuthService from "./auth.service";
 import EngineService from "./engine.service";
@@ -8,9 +9,10 @@ import EngineService from "./engine.service";
 /**
  * Grava o cadastro quando o usuário aceita o plano na tela de revisão.
  *
- * Recebe o cadastro inteiro numa chamada só — conta, perfil e plano — porque
- * ainda não há autenticação: é o próprio payload que diz quem está sendo
- * criado. Nada é gravado antes desta confirmação.
+ * Recebe o cadastro inteiro numa chamada só — conta, perfil e plano — porque é
+ * a requisição que CRIA a identidade: não há token para apresentar antes de a
+ * conta existir. Nada é gravado antes desta confirmação, e é ela que devolve o
+ * primeiro token da sessão.
  *
  * Os NÚMEROS do plano são recalculados aqui a partir do perfil, em vez de
  * virem no payload: o EngineService é determinístico, então o resultado é
@@ -35,7 +37,7 @@ export default class UserService {
         this.authService = authService;
     }
 
-    async cadastrar(entrada: CadastroRequest): Promise<{ usuarioId: string }> {
+    async cadastrar(entrada: CadastroRequest): Promise<SessaoIniciada> {
         const { conta, perfil, plano } = entrada;
 
         if (!perfil) {
@@ -64,6 +66,8 @@ export default class UserService {
 
         console.log(`[cadastro] usuário criado: ${usuario.id} (${conta.email})`);
 
-        return { usuarioId: usuario.id };
+        // Já sai autenticado: obrigar quem acabou de escolher a senha a digitá-la
+        // de novo na tela seguinte seria atrito puro.
+        return this.authService.abrirSessao(usuario);
     }
 }

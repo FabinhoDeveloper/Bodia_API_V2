@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import prismaClient from "../config/prisma";
 import HidratacaoController from "../controllers/hidratacao.controller";
+import autenticacao from "../middlewares/autenticacao";
 import HidratacaoRepository from "../repositories/hidratacao.repository";
 import PlanRepository from "../repositories/plan.repository";
 import HidratacaoService from "../services/hidratacao.service";
@@ -17,10 +18,13 @@ const hidratacaoController = new HidratacaoController(
     ),
 );
 
+router.use("/hidratacao", autenticacao);
+
 router.post("/hidratacao", hidratacaoController.registrar);
-router.get("/hidratacao/:usuarioId", hidratacaoController.buscar);
-// O usuarioId na URL do DELETE não é decoração: é ele que impede apagar
-// registro de outra pessoa, já que não há token para dizer quem está pedindo.
-router.delete("/hidratacao/:usuarioId/:registroId", hidratacaoController.remover);
+router.get("/hidratacao", hidratacaoController.buscar);
+// O usuarioId saiu da URL: era ele que impedia apagar registro alheio enquanto
+// não havia token. O `where` do repository continua filtrando por usuário — só
+// que agora com o id que veio da assinatura, e não com o que o cliente mandou.
+router.delete("/hidratacao/:registroId", hidratacaoController.remover);
 
 export default router;
