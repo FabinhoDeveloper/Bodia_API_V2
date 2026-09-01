@@ -85,6 +85,7 @@ describe("app (smoke)", () => {
                 "POST /api/cadastro",
                 "POST /api/login",
                 "GET /api/plano",
+                "POST /api/plano/regenerar",
                 "GET /api/teste-geracao",
                 "POST /api/hidratacao",
                 "GET /api/hidratacao",
@@ -109,6 +110,7 @@ describe("app (smoke)", () => {
     describe("rotas protegidas", () => {
         it.each([
             ["get", "/api/plano"],
+            ["post", "/api/plano/regenerar"],
             ["post", "/api/hidratacao"],
             ["get", "/api/hidratacao"],
             ["delete", "/api/hidratacao/registro-1"],

@@ -2,7 +2,9 @@ import NaoEncontradoError from "../../src/errors/nao-encontrado.error";
 import ValidationError from "../../src/errors/validation.error";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
 import MeuPlanoMapper from "../../src/mappers/meu-plano.mapper";
+import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PlanoMapper from "../../src/mappers/plano.mapper";
+import PesoRepository from "../../src/repositories/peso.repository";
 import PlanRepository from "../../src/repositories/plan.repository";
 import EngineService from "../../src/services/engine.service";
 import PlanService from "../../src/services/plan.service";
@@ -70,10 +72,42 @@ function planoServiceFake(gerar = jest.fn().mockResolvedValue(PLANO_FAKE)) {
     return { gerar } as unknown as PlanoIaGenerator & { gerar: jest.Mock };
 }
 
+/**
+ * Todos os métodos como jest.Mock.
+ *
+ * O tipo é mapeado, e não uma interseção com `Record<string, jest.Mock>`: numa
+ * interseção o método concreto vence a assinatura de índice, e `.mockResolvedValue`
+ * some.
+ */
+type PlanRepositoryFake = { [K in keyof PlanRepository]: jest.Mock };
+type PesoRepositoryFake = { [K in keyof PesoRepository]: jest.Mock };
+
 function repositoryFake(retorno: unknown) {
     return {
         buscarPlanoAtivo: jest.fn().mockResolvedValue(retorno),
-    } as unknown as PlanRepository & { buscarPlanoAtivo: jest.Mock };
+        buscarRestricoes: jest
+            .fn()
+            .mockResolvedValue({ restricoesAlimentares: [], restricoesFisicas: [] }),
+        substituirFichas: jest.fn().mockResolvedValue(undefined),
+    } as unknown as PlanRepositoryFake;
+}
+
+/** O usuário como o banco o guarda — só o que o motor consome. */
+function pesoRepositoryFake(pesoKg: number | null = 65) {
+    return {
+        buscarPerfil: jest.fn().mockResolvedValue({
+            sexo: "F",
+            dataNascimento: new Date("1998-04-10T00:00:00.000Z"),
+            alturaCm: 165,
+            percentualGordura: 20,
+            nivelAtividade: "MODERADO",
+            nivelExperiencia: "INICIANTE",
+            objetivo: "PERDER",
+            diasPorSemana: 4,
+            numeroRefeicoes: 4,
+            pesos: pesoKg === null ? [] : [{ pesoKg }],
+        }),
+    } as unknown as PesoRepositoryFake;
 }
 
 /** PlanService montado para exercitar `gerar` — a leitura não é usada aqui. */
@@ -82,23 +116,30 @@ function servicoDeGeracao(gerador = planoServiceFake()) {
         new EngineService(),
         gerador,
         new PlanoMapper(),
-        repositoryFake(null),
+        repositoryFake(null) as unknown as PlanRepository,
         new MeuPlanoMapper(),
+        pesoRepositoryFake() as unknown as PesoRepository,
+        new PerfilMapper(),
     );
 }
 
 /** PlanService montado para exercitar `consultar` — a geração não é usada aqui. */
-function servicoDeConsulta(retorno: unknown) {
+function servicoDeConsulta(retorno: unknown, pesoRepository = pesoRepositoryFake()) {
     const repository = repositoryFake(retorno);
+    const gerador = planoServiceFake();
 
     return {
         repository,
+        gerador,
+        pesoRepository,
         service: new PlanService(
             new EngineService(),
-            planoServiceFake(),
+            gerador,
             new PlanoMapper(),
-            repository,
+            repository as unknown as PlanRepository,
             new MeuPlanoMapper(),
+            pesoRepository as unknown as PesoRepository,
+            new PerfilMapper(),
         ),
     };
 }
@@ -206,96 +247,96 @@ describe("PlanService", () => {
 // Vinha de PlanoConsultaService, absorvido por PlanService.consultar — o
 // shaping em si agora mora em MeuPlanoMapper, mas o comportamento observável
 // é o mesmo e continua sendo verificado pela porta do service.
-describe("PlanService.consultar", () => {
-    function usuarioNoBanco(overrides: Record<string, unknown> = {}) {
-        return {
-            nome: "Ana",
-            sobrenome: "Silva",
-            email: "ana@teste.com",
-            alturaCm: 165,
-            objetivo: "PERDER",
-            // Vem ordenado desc e limitado a 1 pelo repository: o peso atual.
-            pesos: [{ pesoKg: 64 }],
-            // A carga de cada exercício vive fora da ficha (CargaExercicio),
-            // indexada pelo id do CATÁLOGO — não pelo id do ExercicioSessao.
-            cargas: [{ exercicioId: 17, pesoKg: 40 }],
-            fichasTreino: [
-                {
-                    split: "Upper / Lower",
-                    diasPorSemana: 4,
-                    sessoes: [
-                        {
-                            id: "s1",
-                            nome: "Upper",
-                            diaSemana: "Segunda",
-                            exercicios: [
-                                {
-                                    id: "e1",
-                                    exercicioId: 1,
-                                    series: 3,
-                                    repeticoes: "8-12",
-                                    descansoSegundos: 90,
-                                    exercicio: {
-                                        nome: "Supino reto com barra",
-                                        grupoMuscular: "Peito",
-                                    },
+function usuarioNoBanco(overrides: Record<string, unknown> = {}) {
+    return {
+        nome: "Ana",
+        sobrenome: "Silva",
+        email: "ana@teste.com",
+        alturaCm: 165,
+        objetivo: "PERDER",
+        // Vem ordenado desc e limitado a 1 pelo repository: o peso atual.
+        pesos: [{ pesoKg: 64 }],
+        // A carga de cada exercício vive fora da ficha (CargaExercicio),
+        // indexada pelo id do CATÁLOGO — não pelo id do ExercicioSessao.
+        cargas: [{ exercicioId: 17, pesoKg: 40 }],
+        fichasTreino: [
+            {
+                split: "Upper / Lower",
+                diasPorSemana: 4,
+                sessoes: [
+                    {
+                        id: "s1",
+                        nome: "Upper",
+                        diaSemana: "Segunda",
+                        exercicios: [
+                            {
+                                id: "e1",
+                                exercicioId: 1,
+                                series: 3,
+                                repeticoes: "8-12",
+                                descansoSegundos: 90,
+                                exercicio: {
+                                    nome: "Supino reto com barra",
+                                    grupoMuscular: "Peito",
                                 },
-                                {
-                                    id: "e2",
-                                    exercicioId: 17,
-                                    series: 3,
-                                    repeticoes: "8-12",
-                                    descansoSegundos: 90,
-                                    exercicio: {
-                                        nome: "Puxada frente na polia",
-                                        grupoMuscular: "Costas",
-                                    },
+                            },
+                            {
+                                id: "e2",
+                                exercicioId: 17,
+                                series: 3,
+                                repeticoes: "8-12",
+                                descansoSegundos: 90,
+                                exercicio: {
+                                    nome: "Puxada frente na polia",
+                                    grupoMuscular: "Costas",
                                 },
-                                {
-                                    id: "e3",
-                                    exercicioId: 20,
-                                    series: 3,
-                                    repeticoes: "8-12",
-                                    descansoSegundos: 90,
-                                    // Mesmo grupo do anterior: não pode duplicar no resumo.
-                                    exercicio: { nome: "Remada curvada", grupoMuscular: "Costas" },
-                                },
-                            ],
-                        },
-                    ],
-                },
-            ],
-            fichasAlimentacao: [
-                {
-                    caloriasAlvo: 1711,
-                    proteinaG: 140,
-                    carboidratoG: 181,
-                    gorduraG: 48,
-                    metaAguaMl: 2000,
-                    refeicoes: [
-                        {
-                            id: "r1",
-                            nome: "Almoço",
-                            horario: "12:30",
-                            kcal: 599,
-                            proteinaG: 49,
-                            carboidratoG: 63,
-                            gorduraG: 17,
-                            itens: [
-                                {
-                                    alimentoId: 3,
-                                    gramas: 150,
-                                    alimento: { nome: "Arroz, tipo 1, cozido", kcal: 128.26 },
-                                },
-                            ],
-                        },
-                    ],
-                },
-            ],
-            ...overrides,
-        };
-    }
+                            },
+                            {
+                                id: "e3",
+                                exercicioId: 20,
+                                series: 3,
+                                repeticoes: "8-12",
+                                descansoSegundos: 90,
+                                // Mesmo grupo do anterior: não pode duplicar no resumo.
+                                exercicio: { nome: "Remada curvada", grupoMuscular: "Costas" },
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+        fichasAlimentacao: [
+            {
+                caloriasAlvo: 1711,
+                proteinaG: 140,
+                carboidratoG: 181,
+                gorduraG: 48,
+                metaAguaMl: 2000,
+                refeicoes: [
+                    {
+                        id: "r1",
+                        nome: "Almoço",
+                        horario: "12:30",
+                        kcal: 599,
+                        proteinaG: 49,
+                        carboidratoG: 63,
+                        gorduraG: 17,
+                        itens: [
+                            {
+                                alimentoId: 3,
+                                gramas: 150,
+                                alimento: { nome: "Arroz, tipo 1, cozido", kcal: 128.26 },
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+        ...overrides,
+    };
+}
 
+describe("PlanService.consultar", () => {
     it("usa o registro mais recente como peso atual", async () => {
         const { service } = servicoDeConsulta(usuarioNoBanco());
 
@@ -369,5 +410,71 @@ describe("PlanService.consultar", () => {
         const { service } = servicoDeConsulta(usuarioNoBanco({ pesos: [] }));
 
         expect((await service.consultar("usuario-1")).usuario.pesoAtualKg).toBeNull();
+    });
+});
+// RF20. A diferença para `gerar` é que aqui o usuário já existe: o perfil vem
+// do BANCO e o plano é gravado na hora, sem tela de aprovação.
+describe("PlanService.regenerar", () => {
+    const USUARIO_COM_PLANO = usuarioNoBanco();
+
+    it("monta o perfil a partir do banco, e não de um payload", async () => {
+        const { service, gerador, pesoRepository } = servicoDeConsulta(USUARIO_COM_PLANO);
+
+        await service.regenerar("usuario-1");
+
+        expect(pesoRepository.buscarPerfil).toHaveBeenCalledWith("usuario-1");
+        const [perfilUsado] = gerador.gerar.mock.calls[0];
+        expect(perfilUsado).toMatchObject({ sexo: "F", altura: 165, objetivo: "perder" });
+    });
+
+    // Sem elas, regenerar devolveria frango a um vegano: é o único pedaço do
+    // perfil que não está na tabela Usuario.
+    it("leva as restrições declaradas para o gerador", async () => {
+        const { service, repository, gerador } = servicoDeConsulta(USUARIO_COM_PLANO);
+        repository.buscarRestricoes.mockResolvedValue({
+            restricoesAlimentares: ["Lactose"],
+            restricoesFisicas: ["Joelho"],
+        });
+
+        await service.regenerar("usuario-1");
+
+        const [perfilUsado] = gerador.gerar.mock.calls[0];
+        expect(perfilUsado).toMatchObject({
+            restricoesAlimentares: ["Lactose"],
+            restricoesFisicas: ["Joelho"],
+        });
+    });
+
+    it("substitui as fichas em vez de criar ficha nova solta", async () => {
+        const { service, repository } = servicoDeConsulta(USUARIO_COM_PLANO);
+
+        await service.regenerar("usuario-1");
+
+        expect(repository.substituirFichas).toHaveBeenCalledWith(
+            "usuario-1",
+            expect.objectContaining({ metas: expect.any(Object) }),
+            expect.objectContaining({ metabolismo: expect.any(Object) }),
+        );
+    });
+
+    // Sem os ids do banco a tela abriria e nada seria clicável: o app precisa
+    // deles para marcar refeição e abrir treino.
+    it("devolve o plano lido do banco, com os ids das telas", async () => {
+        const { service } = servicoDeConsulta(USUARIO_COM_PLANO);
+
+        const plano = await service.regenerar("usuario-1");
+
+        expect(plano.treino.sessoes[0].id).toBe("s1");
+        expect(plano.dieta.refeicoes[0].id).toBe("r1");
+    });
+
+    it("recusa usuário sem peso registrado", async () => {
+        const { service, repository } = servicoDeConsulta(
+            USUARIO_COM_PLANO,
+            pesoRepositoryFake(null),
+        );
+
+        await expect(service.regenerar("usuario-1")).rejects.toThrow(NaoEncontradoError);
+        expect(repository.substituirFichas).not.toHaveBeenCalled();
     });
 });

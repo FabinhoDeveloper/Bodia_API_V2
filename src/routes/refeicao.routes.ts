@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import prismaClient from "../config/prisma";
 import RefeicaoController from "../controllers/refeicao.controller";
+import FichaMapper from "../mappers/ficha.mapper";
 import autenticacao from "../middlewares/autenticacao";
 import PlanRepository from "../repositories/plan.repository";
 import RefeicaoRepository from "../repositories/refeicao.repository";
@@ -12,7 +13,7 @@ const router = Router();
 // O PlanRepository entra pela ficha ativa: metas, total de refeições e a
 // conferência de que o refeicaoId é mesmo deste usuário.
 const refeicaoController = new RefeicaoController(
-    new RefeicaoService(new RefeicaoRepository(prismaClient), new PlanRepository(prismaClient)),
+    new RefeicaoService(new RefeicaoRepository(prismaClient), new PlanRepository(prismaClient, new FichaMapper())),
 );
 
 router.use("/refeicao", autenticacao);

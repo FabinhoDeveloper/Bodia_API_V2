@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import prismaClient from "../config/prisma";
 import HidratacaoController from "../controllers/hidratacao.controller";
+import FichaMapper from "../mappers/ficha.mapper";
 import autenticacao from "../middlewares/autenticacao";
 import HidratacaoRepository from "../repositories/hidratacao.repository";
 import PlanRepository from "../repositories/plan.repository";
@@ -14,7 +15,7 @@ const router = Router();
 const hidratacaoController = new HidratacaoController(
     new HidratacaoService(
         new HidratacaoRepository(prismaClient),
-        new PlanRepository(prismaClient),
+        new PlanRepository(prismaClient, new FichaMapper()),
     ),
 );
 

@@ -1,5 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 
+import FichaMapper from "../mappers/ficha.mapper";
+import { ResultadoCalculo } from "../types/perfil.types";
+import { PlanoDTO } from "../types/plano.types";
+
 /**
  * Leitura do plano ativo de um usuário. Traz tudo numa consulta só — usuário,
  * peso mais recente, ficha de treino e ficha de alimentação — porque as telas
@@ -7,9 +11,72 @@ import { PrismaClient } from "@prisma/client";
  */
 export default class PlanRepository {
     private readonly prismaClient;
+    private readonly fichaMapper;
 
-    constructor(prismaClient: PrismaClient) {
+    constructor(prismaClient: PrismaClient, fichaMapper: FichaMapper) {
         this.prismaClient = prismaClient;
+        this.fichaMapper = fichaMapper;
+    }
+
+    /**
+     * Troca as fichas ativas do usuário pelas do plano novo (RF20).
+     *
+     * A anterior é DESATIVADA, nunca apagada. É o que preserva a evolução das
+     * metas e, principalmente, o que mantém o histórico correto: uma refeição
+     * marcada de manhã aponta para a `Refeicao` da ficha antiga, e o registro de
+     * treino para a `SessaoTreino` dela — apagar a ficha levaria junto o que o
+     * usuário fez no dia.
+     *
+     * Tudo numa transação porque "só uma ficha ativa por usuário" não é
+     * constraint no banco: entre desativar e criar não pode haver janela com
+     * zero fichas ativas nem com duas.
+     */
+    /**
+     * As restrições declaradas pelo usuário, já separadas por tipo.
+     *
+     * São o que o `catalogo.filter` usa para remover alimentos e exercícios do
+     * prompt ANTES de o modelo os ver. Regenerar sem elas devolveria frango a um
+     * vegano — é o único pedaço do perfil que não está na tabela `Usuario`.
+     */
+    async buscarRestricoes(
+        usuarioId: string,
+    ): Promise<{ restricoesAlimentares: string[]; restricoesFisicas: string[] }> {
+        const restricoes = await this.prismaClient.restricao.findMany({
+            where: { usuarioId },
+            select: { tipo: true, descricao: true },
+        });
+
+        return {
+            restricoesAlimentares: restricoes
+                .filter((r) => r.tipo === "ALIMENTAR")
+                .map((r) => r.descricao),
+            restricoesFisicas: restricoes
+                .filter((r) => r.tipo === "FISICA")
+                .map((r) => r.descricao),
+        };
+    }
+
+    async substituirFichas(
+        usuarioId: string,
+        plano: PlanoDTO,
+        resultado: ResultadoCalculo,
+    ): Promise<void> {
+        await this.prismaClient.$transaction([
+            this.prismaClient.fichaTreino.updateMany({
+                where: { usuarioId, ativa: true },
+                data: { ativa: false },
+            }),
+            this.prismaClient.fichaAlimentacao.updateMany({
+                where: { usuarioId, ativa: true },
+                data: { ativa: false },
+            }),
+            this.prismaClient.fichaTreino.create({
+                data: { usuarioId, ...this.fichaMapper.treino(plano, resultado) },
+            }),
+            this.prismaClient.fichaAlimentacao.create({
+                data: { usuarioId, ...this.fichaMapper.alimentacao(plano, resultado) },
+            }),
+        ]);
     }
 
     /**

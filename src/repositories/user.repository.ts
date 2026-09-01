@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient, Sexo, TipoRestricao } from "@prisma/client";
 
+import FichaMapper from "../mappers/ficha.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import { ContaInput, PerfilOnboardingInput, ResultadoCalculo } from "../types/perfil.types";
 import { PlanoDTO } from "../types/plano.types";
@@ -17,10 +18,16 @@ export interface CadastroCompleto {
 export default class UserRepository {
     private readonly prismaClient;
     private readonly perfilMapper;
+    private readonly fichaMapper;
 
-    constructor(prismaClient: PrismaClient, perfilMapper: PerfilMapper) {
+    constructor(
+        prismaClient: PrismaClient,
+        perfilMapper: PerfilMapper,
+        fichaMapper: FichaMapper,
+    ) {
         this.prismaClient = prismaClient;
         this.perfilMapper = perfilMapper;
+        this.fichaMapper = fichaMapper;
     }
 
     buscarPorEmail(email: string) {
@@ -121,15 +128,6 @@ export default class UserRepository {
      * pior que não ter usuário nenhum.
      */
     criar({ conta, perfil, plano, resultado, senhaHash }: CadastroCompleto) {
-        // A frequência da sessão e os macros da refeição vêm do cálculo, não do
-        // plano — casados pelo nome, que é o que os dois lados têm em comum.
-        const frequenciaPorSessao = new Map(
-            resultado.treino.sessoes.map((sessao) => [sessao.nome, sessao.frequenciaSemanal]),
-        );
-        const metaPorRefeicao = new Map(
-            resultado.dieta.refeicoes.map((refeicao) => [refeicao.nome, refeicao]),
-        );
-
         const restricoes = [
             ...perfil.restricoesAlimentares.map((descricao) => ({
                 tipo: "ALIMENTAR" as const,
@@ -166,66 +164,12 @@ export default class UserRepository {
 
                 restricoes: { create: restricoes },
 
-                fichasTreino: {
-                    create: [
-                        {
-                            split: plano.treino.split,
-                            diasPorSemana: plano.treino.diasPorSemana,
-                            seriesPorGrupoSemana: resultado.treino.seriesPorGrupoSemana,
-                            sessoes: {
-                                create: plano.treino.sessoes.map((sessao, indice) => ({
-                                    nome: sessao.nome,
-                                    diasSemana: sessao.diasSemana,
-                                    frequenciaSemanal: frequenciaPorSessao.get(sessao.nome) ?? 1,
-                                    ordem: indice,
-                                    exercicios: {
-                                        create: sessao.exercicios.map((exercicio, posicao) => ({
-                                            exercicioId: exercicio.exercicioId,
-                                            series: exercicio.series,
-                                            repeticoes: exercicio.repeticoes,
-                                            descansoSegundos: exercicio.descansoSegundos,
-                                            ordem: posicao,
-                                        })),
-                                    },
-                                })),
-                            },
-                        },
-                    ],
-                },
-
+                // A montagem das duas fichas vive no FichaMapper porque a
+                // regeneração do plano (RF20) precisa exatamente dela, com o
+                // usuário já existindo — duas cópias divergiriam.
+                fichasTreino: { create: [this.fichaMapper.treino(plano, resultado)] },
                 fichasAlimentacao: {
-                    create: [
-                        {
-                            tmb: resultado.metabolismo.tmb,
-                            tdee: resultado.metabolismo.tdee,
-                            caloriasAlvo: plano.metas.calorias,
-                            proteinaG: plano.metas.proteinaG,
-                            carboidratoG: plano.metas.carboidratoG,
-                            gorduraG: plano.metas.gorduraG,
-                            metaAguaMl: plano.metas.aguaMl,
-                            refeicoes: {
-                                create: plano.dieta.refeicoes.map((refeicao, indice) => {
-                                    const meta = metaPorRefeicao.get(refeicao.nome);
-
-                                    return {
-                                        nome: refeicao.nome,
-                                        horario: refeicao.horario,
-                                        ordem: indice,
-                                        kcal: meta?.kcal ?? refeicao.kcal,
-                                        proteinaG: meta?.proteina ?? 0,
-                                        carboidratoG: meta?.carboidrato ?? 0,
-                                        gorduraG: meta?.gordura ?? 0,
-                                        itens: {
-                                            create: refeicao.itens.map((item) => ({
-                                                alimentoId: item.alimentoId,
-                                                gramas: item.gramas,
-                                            })),
-                                        },
-                                    };
-                                }),
-                            },
-                        },
-                    ],
+                    create: [this.fichaMapper.alimentacao(plano, resultado)],
                 },
             },
         });

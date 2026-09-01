@@ -4,6 +4,7 @@ import { bcryptRounds } from "../config/auth";
 import prismaClient from "../config/prisma";
 import { limiteAutenticacao } from "../config/seguranca";
 import UserController from "../controllers/user.controller";
+import FichaMapper from "../mappers/ficha.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import autenticacao from "../middlewares/autenticacao";
 import PesoRepository from "../repositories/peso.repository";
@@ -16,7 +17,7 @@ import UserService from "../services/user.service";
 const router = Router();
 
 const perfilMapper = new PerfilMapper();
-const userRepository = new UserRepository(prismaClient, perfilMapper);
+const userRepository = new UserRepository(prismaClient, perfilMapper, new FichaMapper());
 
 // O PlanRepository entra aqui pela ficha ativa: é nela que as metas
 // recalculadas são gravadas quando o usuário registra um peso novo (RF34).
@@ -26,7 +27,7 @@ const userController = new UserController(
         new EngineService(),
         new AuthService(userRepository, bcryptRounds),
         new PesoRepository(prismaClient),
-        new PlanRepository(prismaClient),
+        new PlanRepository(prismaClient, new FichaMapper()),
         perfilMapper,
     ),
 );
