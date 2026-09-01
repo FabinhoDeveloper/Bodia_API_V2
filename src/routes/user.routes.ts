@@ -35,12 +35,18 @@ const userController = new UserController(
 // conta, e sem limite dá para varrer uma lista de e-mails com ele.
 router.post("/cadastro", limiteAutenticacao, userController.cadastrar);
 
+router.use("/conta", autenticacao);
 router.use("/perfil", autenticacao);
 router.use("/peso", autenticacao);
 
 // PATCH, e não PUT: a tela manda só o que mudou, e campo ausente é campo NÃO
 // alterado — um PUT obrigaria a reenviar o perfil inteiro e transformaria um
 // campo esquecido em apagamento.
+// RF35 (LGPD): exige a senha no corpo além do token — a exclusão é
+// irreversível, e o token sozinho tornaria um aparelho desbloqueado por alguns
+// segundos suficiente para destruir o histórico de alguém.
+router.delete("/conta", userController.excluirConta);
+
 router.get("/perfil", userController.consultarPerfil);
 router.patch("/perfil", userController.atualizarPerfil);
 

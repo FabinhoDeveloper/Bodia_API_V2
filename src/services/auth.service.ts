@@ -81,6 +81,24 @@ export default class AuthService {
         return bcrypt.hash(senha, this.bcryptRounds);
     }
 
+    /**
+     * Confere uma senha contra o hash de um usuário já identificado.
+     *
+     * Público porque a EXCLUSÃO DE CONTA (RF35) precisa dele: apagar tudo é
+     * irreversível, e o token sozinho não basta — um aparelho desbloqueado por
+     * alguns segundos bastaria para destruir o histórico de outra pessoa.
+     *
+     * Diferente de `entrar`, aqui já se sabe QUEM é: o id vem do token, e o que
+     * se confere é só a posse da senha.
+     */
+    async conferirSenhaDe(usuarioId: string, senha: string): Promise<boolean> {
+        if (typeof senha !== "string" || !senha) return false;
+
+        const hash = await this.userRepository.buscarSenhaHash(usuarioId);
+
+        return hash ? this.conferirSenha(senha, hash) : false;
+    }
+
     private conferirSenha(senha: string, hash: string): Promise<boolean> {
         return bcrypt.compare(senha, hash);
     }

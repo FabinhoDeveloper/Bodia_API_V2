@@ -48,6 +48,17 @@ export default class UserController {
             .catch(next);
     };
 
+    excluirConta = (req: Request, res: Response, next: NextFunction) => {
+        const { senha } = req.body ?? {};
+
+        this.userService
+            .excluirConta(usuarioAutenticado(req), senha)
+            // 204: não há corpo a devolver, e a conta que responderia acabou de
+            // deixar de existir.
+            .then(() => res.status(204).send())
+            .catch(next);
+    };
+
     consultarPeso = (req: Request, res: Response, next: NextFunction) => {
         this.userService
             .consultarPeso(usuarioAutenticado(req))

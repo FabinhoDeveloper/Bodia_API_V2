@@ -95,6 +95,7 @@ describe("app (smoke)", () => {
                 "POST /api/treino",
                 "POST /api/treino/:registroTreinoId/concluir",
                 "GET /api/treino",
+                "DELETE /api/conta",
                 "GET /api/perfil",
                 "PATCH /api/perfil",
                 "POST /api/peso",
@@ -119,6 +120,7 @@ describe("app (smoke)", () => {
             ["get", "/api/treino"],
             ["post", "/api/peso"],
             ["get", "/api/peso"],
+            ["delete", "/api/conta"],
             ["get", "/api/perfil"],
             ["patch", "/api/perfil"],
         ])("devolve 401 em %s %s sem token", async (metodo, rota) => {

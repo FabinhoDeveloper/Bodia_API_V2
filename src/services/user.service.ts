@@ -1,3 +1,4 @@
+import AutenticacaoError from "../errors/autenticacao.error";
 import ConflitoError from "../errors/conflito.error";
 import NaoEncontradoError from "../errors/nao-encontrado.error";
 import ValidationError from "../errors/validation.error";
@@ -145,6 +146,29 @@ export default class UserService {
         await this.pesoRepository.criar(usuarioId, pesoKg);
 
         return this.recalcular(usuarioId);
+    }
+
+    /**
+     * Apaga a conta e todos os dados pessoais (RF35, LGPD / UC18).
+     *
+     * Exige a SENHA além do token: a exclusão é irreversível e não tem desfazer,
+     * e um aparelho desbloqueado por alguns segundos bastaria para destruir o
+     * histórico de outra pessoa. O token prova quem está pedindo; a senha prova
+     * que é a própria pessoa pedindo.
+     *
+     * A remoção em profundidade é do banco, por `onDelete: Cascade` — ver o
+     * repository.
+     */
+    async excluirConta(usuarioId: string, senha: string): Promise<void> {
+        if (!(await this.authService.conferirSenhaDe(usuarioId, senha))) {
+            throw new AutenticacaoError("Senha incorreta");
+        }
+
+        await this.userRepository.excluir(usuarioId);
+
+        // Sem o e-mail nem o id no log: a linha sobreviveria à exclusão e
+        // guardaria justamente o dado pessoal que o usuário pediu para apagar.
+        console.log("[conta] exclusão concluída");
     }
 
     /** O perfil como a tela de edição o exibe (RF10 / UC06 passo 2). */

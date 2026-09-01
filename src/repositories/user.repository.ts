@@ -28,6 +28,33 @@ export default class UserRepository {
     }
 
     /**
+     * Só o hash da senha. Existe separado de `buscarPerfilCompleto` porque um
+     * `select` que traga o hash junto de dados de tela é um convite a vazá-lo
+     * numa resposta por descuido.
+     */
+    async buscarSenhaHash(usuarioId: string): Promise<string | null> {
+        const usuario = await this.prismaClient.usuario.findUnique({
+            where: { id: usuarioId },
+            select: { senhaHash: true },
+        });
+
+        return usuario?.senhaHash ?? null;
+    }
+
+    /**
+     * Apaga a conta e tudo que pende dela (RF35, LGPD).
+     *
+     * Uma linha só: todas as relações de `Usuario` declaram
+     * `onDelete: Cascade`, então peso, restrições, fichas, sessões, exercícios,
+     * refeições, itens, hidratação, refeições marcadas, treinos, séries e cargas
+     * saem junto, no mesmo comando. Apagar tabela por tabela aqui reproduziria
+     * essa lista no código, e ela ficaria desatualizada na próxima tabela nova.
+     */
+    async excluir(usuarioId: string): Promise<void> {
+        await this.prismaClient.usuario.delete({ where: { id: usuarioId } });
+    }
+
+    /**
      * O perfil inteiro para a tela de edição — os dados pessoais, os físicos e
      * as restrições.
      *

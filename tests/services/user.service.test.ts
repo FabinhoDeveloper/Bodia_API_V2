@@ -4,6 +4,7 @@ import { lerToken } from "../../src/config/jwt";
 import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PesoRepository from "../../src/repositories/peso.repository";
 import PlanRepository from "../../src/repositories/plan.repository";
+import AutenticacaoError from "../../src/errors/autenticacao.error";
 import ConflitoError from "../../src/errors/conflito.error";
 import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
@@ -110,6 +111,8 @@ function repositoryFake(emailExistente = false) {
         buscarPorEmail: jest.fn().mockResolvedValue(emailExistente ? { id: "existente" } : null),
         buscarPerfilCompleto: jest.fn().mockResolvedValue(perfilCompleto()),
         atualizarPerfil: jest.fn().mockResolvedValue(undefined),
+        excluir: jest.fn().mockResolvedValue(undefined),
+        buscarSenhaHash: jest.fn().mockResolvedValue(null),
         // O `criar` do Prisma devolve a linha inteira, e o service usa nome,
         // sobrenome e e-mail para abrir a sessão — um fake só com `id` deixaria
         // esses campos `undefined` sem nenhum teste acusar.
@@ -504,6 +507,61 @@ describe("UserService", () => {
             expect(perfil.nivelAtividade).toBe("moderado");
             expect(perfil.objetivo).toBe("perder");
             expect(perfil.restricoesAlimentares).toEqual(["Lactose"]);
+        });
+    });
+
+    // RF35 / UC18. A exclusão é irreversível: exigir só o token faria de um
+    // aparelho desbloqueado por alguns segundos o bastante para destruir o
+    // histórico de alguém.
+    describe("excluirConta", () => {
+        /** Um service cujo AuthService confere a senha contra um hash de verdade. */
+        async function comSenha(senhaCorreta: string) {
+            const repository = repositoryFake();
+            const hash = await authService.gerarHash(senhaCorreta);
+            repository.buscarSenhaHash.mockResolvedValue(hash);
+
+            return {
+                repository,
+                service: new UserService(
+                    repository as unknown as UserRepository,
+                    engineService,
+                    new AuthService(repository as unknown as UserRepository, 4),
+                    pesoRepositoryFake() as unknown as PesoRepository,
+                    planRepositoryFake() as unknown as PlanRepository,
+                    perfilMapper,
+                ),
+            };
+        }
+
+        it("apaga a conta quando a senha confere", async () => {
+            const { service, repository } = await comSenha("12345678");
+
+            await service.excluirConta("u1", "12345678");
+
+            expect(repository.excluir).toHaveBeenCalledWith("u1");
+        });
+
+        it.each([
+            ["senha errada", "outra-senha"],
+            ["senha vazia", ""],
+            ["senha ausente", undefined],
+        ])("recusa %s sem apagar nada", async (_caso, senha) => {
+            const { service, repository } = await comSenha("12345678");
+
+            await expect(
+                service.excluirConta("u1", senha as string),
+            ).rejects.toThrow(AutenticacaoError);
+            expect(repository.excluir).not.toHaveBeenCalled();
+        });
+
+        // A linha de log sobreviveria à exclusão e guardaria justamente o dado
+        // pessoal que o usuário pediu para apagar.
+        it("não registra e-mail nem id no log da exclusão", async () => {
+            const { service } = await comSenha("12345678");
+
+            await service.excluirConta("u1", "12345678");
+
+            expect(logSpy.mock.calls.flat().join(" ")).not.toContain("u1");
         });
     });
 });
