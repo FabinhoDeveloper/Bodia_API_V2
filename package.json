@@ -9,7 +9,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
-    "test": "jest"
+    "test": "jest",
+    "test:cobertura": "jest --coverage --collectCoverageFrom='src/services/engine.service.ts' --collectCoverageFrom='src/data/limites-seguranca.ts' --collectCoverageFrom='src/data/volume-treino.ts' --collectCoverageFrom='src/data/hidratacao.ts' --collectCoverageFrom='src/data/descanso-treino.ts'"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
