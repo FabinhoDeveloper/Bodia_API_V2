@@ -129,6 +129,24 @@ describe("UserService", () => {
         expect(lerToken(token)).toBe("usuario-1");
     });
 
+    it.each([
+        ["e-mail sem arroba", { email: "ana.teste.com" }, /e-mail/i],
+        ["e-mail vazio", { email: "" }, /e-mail/i],
+        ["senha curta", { senha: "1234567" }, /senha/i],
+        ["nome vazio", { nome: " " }, /nome/i],
+        ["sobrenome vazio", { sobrenome: "" }, /sobrenome/i],
+    ])("recusa cadastro com %s, antes de tocar o banco", async (_caso, campo, mensagem) => {
+        const { service, repository } = montar();
+        const cadastro = cadastroBase();
+
+        await expect(
+            service.cadastrar({ ...cadastro, conta: { ...cadastro.conta, ...campo } }),
+        ).rejects.toThrow(mensagem);
+
+        expect(repository.buscarPorEmail).not.toHaveBeenCalled();
+        expect(repository.criar).not.toHaveBeenCalled();
+    });
+
     it("grava a senha em hash, nunca em texto", async () => {
         const { service, repository } = montar();
 
