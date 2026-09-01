@@ -1,11 +1,11 @@
 import bcrypt from "bcrypt";
 
 import { lerToken } from "../../src/config/jwt";
+import AutenticacaoError from "../../src/errors/autenticacao.error";
+import ConflitoError from "../../src/errors/conflito.error";
 import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PesoRepository from "../../src/repositories/peso.repository";
 import PlanRepository from "../../src/repositories/plan.repository";
-import AutenticacaoError from "../../src/errors/autenticacao.error";
-import ConflitoError from "../../src/errors/conflito.error";
 import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
 import UserService from "../../src/services/user.service";
@@ -183,7 +183,6 @@ function montar(
         ),
     };
 }
-
 
 describe("UserService", () => {
     let logSpy: jest.SpyInstance;
