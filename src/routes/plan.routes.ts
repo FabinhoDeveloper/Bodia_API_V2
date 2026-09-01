@@ -9,6 +9,7 @@ import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
 import ValidadorVolume from "../generators/validador-volume";
+import ConferenciaMapper from "../mappers/conferencia.mapper";
 import FichaMapper from "../mappers/ficha.mapper";
 import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
@@ -62,6 +63,7 @@ const planController = new PlanController(
         new MeuPlanoMapper(),
         new PesoRepository(prismaClient),
         new PerfilMapper(),
+        new ConferenciaMapper(),
     ),
 );
 

@@ -1,12 +1,13 @@
 import NaoEncontradoError from "../errors/nao-encontrado.error";
 import ValidationError from "../errors/validation.error";
+import ConferenciaMapper from "../mappers/conferencia.mapper";
 import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PlanoMapper from "../mappers/plano.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
 import { PerfilOnboardingInput } from "../types/perfil.types";
-import { GeradorDePlano, MeuPlano, OnboardingRequest, PlanoDTO } from "../types/plano.types";
+import { GeradorDePlano, MeuPlano, OnboardingRequest, OnboardingResponse } from "../types/plano.types";
 import EngineService from "./engine.service";
 
 /**
@@ -36,6 +37,7 @@ export default class PlanService {
     private readonly meuPlanoMapper;
     private readonly pesoRepository;
     private readonly perfilMapper;
+    private readonly conferenciaMapper;
 
     constructor(
         engineService: EngineService,
@@ -45,6 +47,7 @@ export default class PlanService {
         meuPlanoMapper: MeuPlanoMapper,
         pesoRepository: PesoRepository,
         perfilMapper: PerfilMapper,
+        conferenciaMapper: ConferenciaMapper,
     ) {
         this.engineService = engineService;
         this.geradorDePlano = geradorDePlano;
@@ -53,9 +56,10 @@ export default class PlanService {
         this.meuPlanoMapper = meuPlanoMapper;
         this.pesoRepository = pesoRepository;
         this.perfilMapper = perfilMapper;
+        this.conferenciaMapper = conferenciaMapper;
     }
 
-    async gerar(cadastro: OnboardingRequest): Promise<{ plano: PlanoDTO }> {
+    async gerar(cadastro: OnboardingRequest): Promise<OnboardingResponse> {
         if (!cadastro.perfil) {
             throw new ValidationError("perfil é obrigatório para gerar o plano");
         }
@@ -64,15 +68,22 @@ export default class PlanService {
 
         console.log("[onboarding] plano calculado:", JSON.stringify(resultado, null, 2));
 
-        const { plano, validacao } = await this.geradorDePlano.gerar(cadastro.perfil, resultado);
+        const validado = await this.geradorDePlano.gerar(cadastro.perfil, resultado);
 
-        console.log("[onboarding] conferência dos macros:", JSON.stringify(validacao, null, 2));
+        console.log(
+            "[onboarding] conferência dos macros:",
+            JSON.stringify(validado.validacao, null, 2),
+        );
 
-        const planoDTO = this.planoMapper.montar(plano, resultado);
+        const planoDTO = this.planoMapper.montar(validado.plano, resultado);
 
         console.log("[onboarding] plano enviado ao app:", JSON.stringify(planoDTO, null, 2));
 
-        return { plano: planoDTO };
+        // RF22: o desvio medido VAI JUNTO do plano, e não só para o log do
+        // servidor. Medir sem mostrar não fecha o requisito — a tela de revisão
+        // é onde o usuário decide se aceita o plano, e é lá que a informação
+        // vale alguma coisa.
+        return { plano: planoDTO, conferencia: this.conferenciaMapper.montar(validado) };
     }
 
     /**

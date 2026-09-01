@@ -213,6 +213,33 @@ describe("app (smoke)", () => {
             expect(item.gramas).toBeGreaterThan(0);
         });
 
+        // RF22: medir o desvio sem mostrá-lo não fecha o requisito. Antes os
+        // dois validadores rodavam e o resultado ia só para o log do servidor.
+        it("devolve a conferência junto do plano", async () => {
+            const resposta = await request(app)
+                .post("/api/onboarding")
+                .send({ conta: CONTA_VALIDA, perfil: PERFIL_VALIDO });
+
+            const { conferencia } = resposta.body;
+
+            expect(conferencia.toleranciaPercentual).toBeGreaterThan(0);
+            expect(conferencia.dentroDoLimite).toEqual(expect.any(Boolean));
+            expect(conferencia.macros.map((m: { nome: string }) => m.nome)).toEqual([
+                "Calorias",
+                "Proteína",
+                "Carboidrato",
+                "Gordura",
+            ]);
+
+            for (const macro of conferencia.macros) {
+                expect(macro.meta).toBeGreaterThan(0);
+                expect(macro.desvioPercentual).toEqual(expect.any(Number));
+            }
+
+            expect(conferencia.volume.sessoesForaDoOrcamento).toEqual(expect.any(Array));
+        });
+    });
+
     describe("POST /api/cadastro", () => {
         // Estas validações rodam ANTES de qualquer consulta ao Prisma, então o
         // teste não precisa de banco.
@@ -248,7 +275,6 @@ describe("app (smoke)", () => {
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/aceitar/i);
         });
-
     });
 
     describe("hidratação", () => {

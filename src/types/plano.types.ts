@@ -176,8 +176,49 @@ export interface PlanoDTO {
     observacoes?: string;
 }
 
+/**
+ * A conferência do plano, no formato que o app exibe (RF22).
+ *
+ * Vai JUNTO da resposta do onboarding, mas FORA do `PlanoDTO`: o PlanoDTO é
+ * devolvido ao servidor no cadastro, e mandar de volta a conferência que o
+ * próprio servidor produziu não teria propósito nenhum.
+ *
+ * Existe porque medir o desvio sem mostrá-lo não fecha o RF22: até então os dois
+ * validadores recalculavam tudo corretamente e o resultado ia só para o
+ * `console.log` do servidor — ninguém do lado do usuário via.
+ *
+ * A correção automática por reenvio ao modelo, com o desvio realimentado no
+ * prompt, continua fora: esta etapa MEDE e REPORTA, não corrige.
+ */
+export interface ConferenciaDTO {
+    /** Os dois validadores dentro do limite. */
+    dentroDoLimite: boolean;
+    /** Contra o que o desvio dos macros está sendo medido, em pontos percentuais. */
+    toleranciaPercentual: number;
+    macros: {
+        /** "Calorias", "Proteína", ... — pronto para a tela. */
+        nome: string;
+        /** Unidade do valor: "kcal" ou "g". */
+        unidade: string;
+        meta: number;
+        obtido: number;
+        desvioPercentual: number;
+    }[];
+    volume: {
+        dentroDoLimite: boolean;
+        /** Nomes das sessões cujo volume ficou fora do orçamento. */
+        sessoesForaDoOrcamento: string[];
+    };
+}
+
+/** O que o POST /api/onboarding devolve. */
+export interface OnboardingResponse {
+    plano: PlanoDTO;
+    conferencia: ConferenciaDTO;
+}
+
 // ---------------------------------------------------------------------------
-// MeuPlano — o contrato do GET /api/plano/:usuarioId
+// MeuPlano — o contrato do GET /api/plano
 // ---------------------------------------------------------------------------
 
 export interface MeuPlano {

@@ -1,6 +1,7 @@
 import NaoEncontradoError from "../../src/errors/nao-encontrado.error";
 import ValidationError from "../../src/errors/validation.error";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
+import ConferenciaMapper from "../../src/mappers/conferencia.mapper";
 import MeuPlanoMapper from "../../src/mappers/meu-plano.mapper";
 import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PlanoMapper from "../../src/mappers/plano.mapper";
@@ -120,6 +121,7 @@ function servicoDeGeracao(gerador = planoServiceFake()) {
         new MeuPlanoMapper(),
         pesoRepositoryFake() as unknown as PesoRepository,
         new PerfilMapper(),
+        new ConferenciaMapper(),
     );
 }
 
@@ -140,6 +142,7 @@ function servicoDeConsulta(retorno: unknown, pesoRepository = pesoRepositoryFake
             new MeuPlanoMapper(),
             pesoRepository as unknown as PesoRepository,
             new PerfilMapper(),
+            new ConferenciaMapper(),
         ),
     };
 }

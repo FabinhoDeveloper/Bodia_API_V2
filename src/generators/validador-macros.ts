@@ -3,6 +3,18 @@ import { ResultadoCalculo } from "../types/perfil.types";
 import { DesvioMacro, PlanoGerado, Validacao } from "../types/plano.types";
 
 /**
+ * Tolerância aceita entre o recalculado e a meta do motor, em pontos
+ * percentuais.
+ *
+ * EXPORTADA porque três lugares precisam dela: este validador, que a aplica; a
+ * resposta do onboarding, que a informa ao app para que o usuário saiba contra
+ * o que o desvio está sendo medido; e o teste, que a confere. Um limite que só
+ * existe dentro da função que o aplica não pode ser citado por nenhum dos dois
+ * outros — mesmo raciocínio dos limites de volume-treino.ts.
+ */
+export const DESVIO_ACEITAVEL_PERCENTUAL = 5;
+
+/**
  * Recalcula os totais da dieta a partir dos valores da TACO e das gramas
  * propostas, e mede o desvio contra a meta do EngineService. O número final
  * nunca é aceito na palavra de quem montou o plano.
@@ -12,11 +24,6 @@ import { DesvioMacro, PlanoGerado, Validacao } from "../types/plano.types";
  * que corrigir a conta num deles deixava o outro medindo diferente.
  */
 export default class ValidadorMacros {
-    // Limite de referência: a fundamentação teórica cita desvio calórico inferior
-    // a 2% como o resultado alcançável combinando LLM e base nutricional
-    // estruturada via prompt engineering (Khamesian apud SRIVASTAVA et al., 2025).
-    private static readonly DESVIO_ACEITAVEL_PERCENTUAL = 5;
-
     validar(plano: PlanoGerado, alimentos: Alimento[], resultado: ResultadoCalculo): Validacao {
         const porId = new Map(alimentos.map((a) => [a.id, a]));
         const total = { kcal: 0, proteina: 0, carboidrato: 0, gordura: 0 };
@@ -47,7 +54,7 @@ export default class ValidadorMacros {
         const dentroDoLimite = [calorias, proteina, carboidrato, gordura].every(
             (macro) =>
                 Math.abs(macro.desvioPercentual) <=
-                ValidadorMacros.DESVIO_ACEITAVEL_PERCENTUAL,
+                DESVIO_ACEITAVEL_PERCENTUAL,
         );
 
         return { calorias, proteina, carboidrato, gordura, dentroDoLimite };
