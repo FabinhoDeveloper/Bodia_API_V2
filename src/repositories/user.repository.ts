@@ -62,6 +62,9 @@ export default class UserRepository {
                 sobrenome: conta.sobrenome,
                 email: conta.email,
                 senhaHash,
+                // O service já recusou o payload sem aceite; aqui o instante é
+                // registrado, que é o que serve de prova.
+                aceiteTermosEm: new Date(),
 
                 sexo: perfil.sexo as Sexo,
                 dataNascimento: new Date(perfil.dataNascimento),

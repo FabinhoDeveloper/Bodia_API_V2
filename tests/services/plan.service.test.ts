@@ -10,7 +10,13 @@ import { OnboardingRequest, PlanoValidado } from "../../src/types/plano.types";
 
 function cadastroBase(overrides: Partial<OnboardingRequest> = {}): OnboardingRequest {
     return {
-        conta: { nome: "Ana", sobrenome: "Silva", email: "a@b.com", senha: "12345678" },
+        conta: {
+            nome: "Ana",
+            sobrenome: "Silva",
+            email: "a@b.com",
+            senha: "12345678",
+            aceiteTermos: true,
+        },
         perfil: {
             sexo: "F",
             dataNascimento: "1998-04-10",

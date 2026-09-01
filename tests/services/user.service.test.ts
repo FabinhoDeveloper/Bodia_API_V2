@@ -49,7 +49,13 @@ function planoDTO(overrides: Partial<PlanoDTO> = {}): PlanoDTO {
 
 function cadastroBase(overrides: Partial<CadastroRequest> = {}): CadastroRequest {
     return {
-        conta: { nome: "Ana", sobrenome: "Silva", email: "ana@teste.com", senha: "12345678" },
+        conta: {
+            nome: "Ana",
+            sobrenome: "Silva",
+            email: "ana@teste.com",
+            senha: "12345678",
+            aceiteTermos: true,
+        },
         perfil: {
             sexo: "F",
             dataNascimento: "1998-04-10",
@@ -135,13 +141,19 @@ describe("UserService", () => {
         ["senha curta", { senha: "1234567" }, /senha/i],
         ["nome vazio", { nome: " " }, /nome/i],
         ["sobrenome vazio", { sobrenome: "" }, /sobrenome/i],
+        // RF36: sem aceite não há conta.
+        ["aceite ausente", { aceiteTermos: false }, /aceitar/i],
+        ["aceite em texto em vez de booleano", { aceiteTermos: "true" }, /aceitar/i],
     ])("recusa cadastro com %s, antes de tocar o banco", async (_caso, campo, mensagem) => {
         const { service, repository } = montar();
         const cadastro = cadastroBase();
 
-        await expect(
-            service.cadastrar({ ...cadastro, conta: { ...cadastro.conta, ...campo } }),
-        ).rejects.toThrow(mensagem);
+        // O cast existe porque parte dos casos manda um valor do TIPO ERRADO de
+        // propósito ("true" em vez de true): é exatamente o payload que chega de
+        // um cliente qualquer, que o TypeScript não governa.
+        const conta = { ...cadastro.conta, ...campo } as typeof cadastro.conta;
+
+        await expect(service.cadastrar({ ...cadastro, conta })).rejects.toThrow(mensagem);
 
         expect(repository.buscarPorEmail).not.toHaveBeenCalled();
         expect(repository.criar).not.toHaveBeenCalled();

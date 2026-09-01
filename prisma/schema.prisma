@@ -103,6 +103,14 @@ model Usuario {
   /// sempre informa o valor.
   numeroRefeicoes   Int              @default(4)
 
+  /// Quando o usuário aceitou o aviso legal e a política de privacidade (RF36).
+  ///
+  /// Guarda o INSTANTE, e não um booleano: "aceitou" sem "quando" não serve de
+  /// prova nenhuma, e é justamente a data que permite pedir novo aceite se o
+  /// texto mudar. Nulo só nas linhas gravadas antes de a pergunta existir — o
+  /// cadastro sempre preenche, e recusa o payload sem aceite.
+  aceiteTermosEm DateTime?
+
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 

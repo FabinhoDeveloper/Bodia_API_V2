@@ -120,5 +120,14 @@ export default class UserService {
                 `senha deve ter pelo menos ${UserService.SENHA_MIN} caracteres`,
             );
         }
+
+        // RF36: o aceite é OBRIGATÓRIO, e conferido aqui e não só no app — a
+        // tela pode ser contornada, a rota não. `!== true` recusa também o
+        // "true" em texto e o 1, que passariam num teste de veracidade frouxo.
+        if (conta.aceiteTermos !== true) {
+            throw new ValidationError(
+                "é necessário aceitar o aviso legal e a política de privacidade",
+            );
+        }
     }
 }

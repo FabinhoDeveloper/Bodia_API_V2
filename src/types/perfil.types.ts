@@ -105,4 +105,12 @@ export interface ContaInput {
     sobrenome: string;
     email: string;
     senha: string;
+    /**
+     * Aceite do aviso legal e da política de privacidade (RF36).
+     *
+     * Viaja no payload do cadastro, e não numa rota própria: o aceite é
+     * condição para a conta existir, e uma chamada separada abriria a janela em
+     * que a conta existe sem ele.
+     */
+    aceiteTermos: boolean;
 }

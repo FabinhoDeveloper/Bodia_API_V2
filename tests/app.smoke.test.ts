@@ -42,6 +42,7 @@ const CONTA_VALIDA = {
     sobrenome: "de Tal",
     email: "fulano@exemplo.com",
     senha: "senha-secreta",
+    aceiteTermos: true,
 };
 
 /**
@@ -213,6 +214,21 @@ describe("app (smoke)", () => {
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/plano/i);
+        });
+
+        // RF36: o aceite é conferido na ROTA, não só na tela — a tela pode ser
+        // contornada por quem chamar a API direto.
+        it("devolve 400 sem o aceite do aviso legal", async () => {
+            const resposta = await request(app)
+                .post("/api/cadastro")
+                .send({
+                    conta: { ...CONTA_VALIDA, aceiteTermos: false },
+                    perfil: PERFIL_VALIDO,
+                    plano: { treino: { sessoes: [{}] }, dieta: { refeicoes: [{}] } },
+                });
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/aceitar/i);
         });
 
     });
