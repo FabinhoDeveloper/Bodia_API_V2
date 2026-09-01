@@ -1,6 +1,9 @@
 import bcrypt from "bcrypt";
 
 import { lerToken } from "../../src/config/jwt";
+import PerfilMapper from "../../src/mappers/perfil.mapper";
+import PesoRepository from "../../src/repositories/peso.repository";
+import PlanRepository from "../../src/repositories/plan.repository";
 import ConflitoError from "../../src/errors/conflito.error";
 import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
@@ -95,13 +98,61 @@ function repositoryFake(emailExistente = false) {
 // repository não é exercitado por este caminho — o cadastro só usa gerarHash.
 const authService = new AuthService(repositoryFake(), 4);
 const engineService = new EngineService();
+const perfilMapper = new PerfilMapper();
 
-function montar(repository = repositoryFake()) {
+/** O usuário como o banco o guarda, com o peso atual do histórico. */
+function perfilNoBanco(pesoKg = 65) {
     return {
-        repository,
-        service: new UserService(repository, engineService, authService),
+        sexo: "F",
+        dataNascimento: new Date("1998-04-10T00:00:00.000Z"),
+        alturaCm: 165,
+        percentualGordura: 20,
+        nivelAtividade: "MODERADO",
+        nivelExperiencia: "INICIANTE",
+        objetivo: "PERDER",
+        diasPorSemana: 4,
+        numeroRefeicoes: 4,
+        pesos: [{ pesoKg }],
     };
 }
+
+function pesoRepositoryFake(perfil: unknown = perfilNoBanco()) {
+    return {
+        criar: jest.fn().mockResolvedValue(undefined),
+        listar: jest.fn().mockResolvedValue([
+            { id: "p2", pesoKg: 63, registradoEm: new Date("2026-08-31T12:00:00.000Z") },
+            { id: "p1", pesoKg: 65, registradoEm: new Date("2026-08-01T12:00:00.000Z") },
+        ]),
+        buscarPerfil: jest.fn().mockResolvedValue(perfil),
+    } as unknown as { [K in keyof PesoRepository]: jest.Mock };
+}
+
+function planRepositoryFake(temFicha = true) {
+    return {
+        atualizarMetasDaFichaAtiva: jest.fn().mockResolvedValue(temFicha),
+    } as unknown as { [K in keyof PlanRepository]: jest.Mock };
+}
+
+function montar(
+    repository = repositoryFake(),
+    pesoRepository = pesoRepositoryFake(),
+    planRepository = planRepositoryFake(),
+) {
+    return {
+        repository,
+        pesoRepository,
+        planRepository,
+        service: new UserService(
+            repository as unknown as UserRepository,
+            engineService,
+            authService,
+            pesoRepository as unknown as PesoRepository,
+            planRepository as unknown as PlanRepository,
+            perfilMapper,
+        ),
+    };
+}
+
 
 describe("UserService", () => {
     let logSpy: jest.SpyInstance;
@@ -227,5 +278,101 @@ describe("UserService", () => {
         await service.cadastrar(cadastroBase());
 
         expect(logSpy.mock.calls.flat().join(" ")).not.toContain("12345678");
+    });
+
+    describe("registrarPeso", () => {
+        it("grava o peso e devolve o histórico", async () => {
+            const { service, pesoRepository } = montar();
+
+            const resumo = await service.registrarPeso("u1", 63);
+
+            expect(pesoRepository.criar).toHaveBeenCalledWith("u1", 63);
+            expect(resumo.historico[0].pesoKg).toBe(63);
+        });
+
+        // RF34: registrar o peso RECALCULA. Sem isto o usuário emagreceria e
+        // continuaria com a meta calórica de quando era mais pesado.
+        it("recalcula as metas e as grava na ficha ativa", async () => {
+            const { service, planRepository } = montar(
+                repositoryFake(),
+                pesoRepositoryFake(perfilNoBanco(58)),
+            );
+
+            const resumo = await service.registrarPeso("u1", 58);
+
+            expect(planRepository.atualizarMetasDaFichaAtiva).toHaveBeenCalledWith(
+                "u1",
+                resumo.metas,
+            );
+            expect(resumo.metas?.caloriasAlvo).toBeGreaterThan(0);
+            expect(resumo.metas?.metaAguaMl).toBeGreaterThan(0);
+        });
+
+        // O peso NOVO é que manda: recalcular sobre o antigo devolveria a meta
+        // que já estava lá, e ninguém notaria.
+        it("recalcula sobre o peso mais recente, não sobre o anterior", async () => {
+            const magro = montar(repositoryFake(), pesoRepositoryFake(perfilNoBanco(50)));
+            const pesado = montar(repositoryFake(), pesoRepositoryFake(perfilNoBanco(90)));
+
+            const [a, b] = await Promise.all([
+                magro.service.registrarPeso("u1", 50),
+                pesado.service.registrarPeso("u1", 90),
+            ]);
+
+            expect(b.metas!.caloriasAlvo).toBeGreaterThan(a.metas!.caloriasAlvo);
+            expect(b.metas!.metaAguaMl).toBeGreaterThan(a.metas!.metaAguaMl);
+        });
+
+        // O cardápio continua sendo o da meta antiga — trocá-lo é decisão do
+        // usuário (RF20), não efeito colateral de subir na balança.
+        it("avisa que o plano ficou defasado quando havia ficha ativa", async () => {
+            const { service } = montar();
+
+            const resumo = await service.registrarPeso("u1", 63);
+
+            expect(resumo.planoDesatualizado).toBe(true);
+        });
+
+        it("não avisa defasagem quando não havia ficha ativa", async () => {
+            const { service } = montar(
+                repositoryFake(),
+                pesoRepositoryFake(),
+                planRepositoryFake(false),
+            );
+
+            const resumo = await service.registrarPeso("u1", 63);
+
+            expect(resumo.planoDesatualizado).toBe(false);
+        });
+
+        // Um peso errado propaga para TMB, meta calórica, macros e hidratação de
+        // uma vez só: recusá-lo aqui é mais barato que corrigir depois.
+        it.each([0, -70, 7, 800, Number.NaN])("recusa pesoKg %p sem gravar", async (pesoKg) => {
+            const { service, pesoRepository } = montar();
+
+            await expect(service.registrarPeso("u1", pesoKg)).rejects.toThrow(ValidationError);
+            expect(pesoRepository.criar).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("consultarPeso", () => {
+        it("devolve as metas vigentes sem gravar nada", async () => {
+            const { service, pesoRepository, planRepository } = montar();
+
+            const resumo = await service.consultarPeso("u1");
+
+            expect(resumo.metas?.tmb).toBeGreaterThan(0);
+            expect(pesoRepository.criar).not.toHaveBeenCalled();
+            expect(planRepository.atualizarMetasDaFichaAtiva).not.toHaveBeenCalled();
+        });
+
+        it("devolve metas nulas quando não há peso registrado", async () => {
+            const { service } = montar(
+                repositoryFake(),
+                pesoRepositoryFake({ ...perfilNoBanco(), pesos: [] }),
+            );
+
+            await expect(service.consultarPeso("u1")).resolves.toMatchObject({ metas: null });
+        });
     });
 });

@@ -114,3 +114,41 @@ export interface ContaInput {
      */
     aceiteTermos: boolean;
 }
+
+/** Um ponto do histórico de peso, como o app o exibe. */
+export interface RegistroPesoDTO {
+    id: string;
+    pesoKg: number;
+    registradoEm: Date;
+}
+
+/**
+ * O contrato das rotas de peso — registrar e consultar devolvem os dois o mesmo
+ * formato, no mesmo espírito de ResumoHidratacaoDia: registrar já traz as metas
+ * recalculadas, então a tela nunca precisa de um GET depois.
+ *
+ * `pesoAtualKg` NÃO é campo à parte: é `historico[0].pesoKg`, e duas cópias do
+ * mesmo fato divergem. O app lê o primeiro item.
+ */
+export interface ResumoPeso {
+    historico: RegistroPesoDTO[];
+    /**
+     * As metas depois do recálculo (RF34) — TMB, GET, calorias, macros e água.
+     * Nulo quando o usuário ainda não tem ficha ativa.
+     */
+    metas: {
+        tmb: number;
+        tdee: number;
+        caloriasAlvo: number;
+        proteinaG: number;
+        carboidratoG: number;
+        gorduraG: number;
+        metaAguaMl: number;
+    } | null;
+    /**
+     * O cardápio prescrito continua sendo o da ficha anterior, montado para a
+     * meta calórica antiga. `true` avisa a tela para oferecer a regeneração
+     * (RF20) em vez de deixar o usuário com refeições que não somam mais a meta.
+     */
+    planoDesatualizado: boolean;
+}

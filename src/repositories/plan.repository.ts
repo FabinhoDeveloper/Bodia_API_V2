@@ -54,6 +54,38 @@ export default class PlanRepository {
         });
     }
 
+    /**
+     * Reescreve as metas da ficha de alimentação ativa com os números
+     * recalculados (RF34).
+     *
+     * Só as METAS mudam — as refeições prescritas continuam as mesmas. A ficha
+     * não é regenerada aqui de propósito: trocar o cardápio inteiro porque o
+     * usuário se pesou seria uma decisão dele (RF20), não um efeito colateral de
+     * subir na balança. A resposta sinaliza a defasagem e o app oferece regerar.
+     *
+     * Devolve `false` quando não havia ficha ativa, para quem chama distinguir
+     * "atualizei" de "não havia o que atualizar".
+     */
+    async atualizarMetasDaFichaAtiva(
+        usuarioId: string,
+        metas: {
+            tmb: number;
+            tdee: number;
+            caloriasAlvo: number;
+            proteinaG: number;
+            carboidratoG: number;
+            gorduraG: number;
+            metaAguaMl: number;
+        },
+    ): Promise<boolean> {
+        const { count } = await this.prismaClient.fichaAlimentacao.updateMany({
+            where: { usuarioId, ativa: true },
+            data: metas,
+        });
+
+        return count > 0;
+    }
+
     buscarPlanoAtivo(usuarioId: string) {
         return this.prismaClient.usuario.findUnique({
             where: { id: usuarioId },

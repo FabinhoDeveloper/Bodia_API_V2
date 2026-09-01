@@ -95,6 +95,8 @@ describe("app (smoke)", () => {
                 "POST /api/treino",
                 "POST /api/treino/:registroTreinoId/concluir",
                 "GET /api/treino",
+                "POST /api/peso",
+                "GET /api/peso",
             ]),
         );
     });
@@ -113,6 +115,8 @@ describe("app (smoke)", () => {
             ["post", "/api/treino"],
             ["post", "/api/treino/treino-1/concluir"],
             ["get", "/api/treino"],
+            ["post", "/api/peso"],
+            ["get", "/api/peso"],
         ])("devolve 401 em %s %s sem token", async (metodo, rota) => {
             const resposta = await (request(app) as any)[metodo](rota);
 
@@ -262,6 +266,20 @@ describe("app (smoke)", () => {
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);
+        });
+    });
+
+    describe("peso", () => {
+        // A faixa é conferida antes de qualquer consulta ao Prisma: um peso
+        // errado propaga para TMB, meta calórica, macros e hidratação de uma vez.
+        it.each([0, -70, 7, 800, "70"])("devolve 400 ao registrar pesoKg %p", async (pesoKg) => {
+            const resposta = await request(app)
+                .post("/api/peso")
+                .set("Authorization", TOKEN)
+                .send({ pesoKg });
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/pesoKg/i);
         });
     });
 

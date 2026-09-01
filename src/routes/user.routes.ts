@@ -5,6 +5,9 @@ import prismaClient from "../config/prisma";
 import { limiteAutenticacao } from "../config/seguranca";
 import UserController from "../controllers/user.controller";
 import PerfilMapper from "../mappers/perfil.mapper";
+import autenticacao from "../middlewares/autenticacao";
+import PesoRepository from "../repositories/peso.repository";
+import PlanRepository from "../repositories/plan.repository";
 import UserRepository from "../repositories/user.repository";
 import AuthService from "../services/auth.service";
 import EngineService from "../services/engine.service";
@@ -12,18 +15,31 @@ import UserService from "../services/user.service";
 
 const router = Router();
 
-const userRepository = new UserRepository(prismaClient, new PerfilMapper());
+const perfilMapper = new PerfilMapper();
+const userRepository = new UserRepository(prismaClient, perfilMapper);
 
+// O PlanRepository entra aqui pela ficha ativa: é nela que as metas
+// recalculadas são gravadas quando o usuário registra um peso novo (RF34).
 const userController = new UserController(
     new UserService(
         userRepository,
         new EngineService(),
         new AuthService(userRepository, bcryptRounds),
+        new PesoRepository(prismaClient),
+        new PlanRepository(prismaClient),
+        perfilMapper,
     ),
 );
 
 // Mesmo limite do login: o 409 de e-mail duplicado é um oráculo de quem já tem
 // conta, e sem limite dá para varrer uma lista de e-mails com ele.
 router.post("/cadastro", limiteAutenticacao, userController.cadastrar);
+
+router.use("/peso", autenticacao);
+
+// Registrar o peso RECALCULA as metas na mesma chamada (RF33 + RF34): separá-las
+// abriria a janela em que o peso já mudou e a meta calórica ainda é a de antes.
+router.post("/peso", userController.registrarPeso);
+router.get("/peso", userController.consultarPeso);
 
 export default router;
