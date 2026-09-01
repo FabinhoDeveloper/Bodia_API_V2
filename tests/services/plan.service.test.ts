@@ -210,6 +210,9 @@ describe("PlanService.consultar", () => {
             objetivo: "PERDER",
             // Vem ordenado desc e limitado a 1 pelo repository: o peso atual.
             pesos: [{ pesoKg: 64 }],
+            // A carga de cada exercício vive fora da ficha (CargaExercicio),
+            // indexada pelo id do CATÁLOGO — não pelo id do ExercicioSessao.
+            cargas: [{ exercicioId: 17, pesoKg: 40 }],
             fichasTreino: [
                 {
                     split: "Upper / Lower",
@@ -226,7 +229,6 @@ describe("PlanService.consultar", () => {
                                     series: 3,
                                     repeticoes: "8-12",
                                     descansoSegundos: 90,
-                                    ultimoPesoKg: null,
                                     exercicio: {
                                         nome: "Supino reto com barra",
                                         grupoMuscular: "Peito",
@@ -238,7 +240,6 @@ describe("PlanService.consultar", () => {
                                     series: 3,
                                     repeticoes: "8-12",
                                     descansoSegundos: 90,
-                                    ultimoPesoKg: 40,
                                     exercicio: {
                                         nome: "Puxada frente na polia",
                                         grupoMuscular: "Costas",
@@ -250,7 +251,6 @@ describe("PlanService.consultar", () => {
                                     series: 3,
                                     repeticoes: "8-12",
                                     descansoSegundos: 90,
-                                    ultimoPesoKg: null,
                                     // Mesmo grupo do anterior: não pode duplicar no resumo.
                                     exercicio: { nome: "Remada curvada", grupoMuscular: "Costas" },
                                 },
@@ -307,6 +307,18 @@ describe("PlanService.consultar", () => {
         expect(exercicio.nome).toBe("Supino reto com barra");
         expect(exercicio.grupoMuscular).toBe("Peito");
         expect(exercicio.ultimoPesoKg).toBeNull();
+    });
+
+    // A carga é casada pelo id do CATÁLOGO, não pelo do ExercicioSessao — é o
+    // que a faz sobreviver a um plano novo, que cria outra ficha com outros
+    // ExercicioSessao apontando para os mesmos exercícios.
+    it("traz a carga de CargaExercicio, casada pelo id do catálogo", async () => {
+        const { service } = servicoDeConsulta(usuarioNoBanco());
+
+        const exercicios = (await service.consultar("usuario-1")).treino.sessoes[0].exercicios;
+
+        expect(exercicios.find((e) => e.exercicioId === 17)?.ultimoPesoKg).toBe(40);
+        expect(exercicios.find((e) => e.exercicioId === 1)?.ultimoPesoKg).toBeNull();
     });
 
     // O resumo é o subtítulo do card: repetir "Costas" duas vezes ficaria feio.

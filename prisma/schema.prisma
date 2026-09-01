@@ -66,6 +66,7 @@ model Exercicio {
   articulacoes  String[]
 
   emSessoes ExercicioSessao[]
+  cargas    CargaExercicio[]
 
   @@index([grupoMuscular])
 }
@@ -111,6 +112,7 @@ model Usuario {
   fichasAlimentacao FichaAlimentacao[]
   hidratacoes       RegistroHidratacao[]
   refeicoesFeitas   RegistroRefeicao[]
+  cargas            CargaExercicio[]
 }
 
 /// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo
@@ -217,12 +219,6 @@ model ExercicioSessao {
   descansoSegundos Int    @default(60)
   ordem            Int
 
-  /// Carga da última vez que o usuário fez este exercício. Nasce NULL porque
-  /// ninguém prescreve peso: quem descobre a carga é o próprio usuário
-  /// treinando. Depois do primeiro treino registrado, o app pré-preenche com
-  /// este valor.
-  ultimoPesoKg Float?
-
   sessaoTreino SessaoTreino @relation(fields: [sessaoTreinoId], references: [id], onDelete: Cascade)
   exercicio    Exercicio    @relation(fields: [exercicioId], references: [id])
 
@@ -293,6 +289,32 @@ model ItemRefeicao {
   alimento Alimento @relation(fields: [alimentoId], references: [id])
 
   @@index([refeicaoId])
+}
+
+/// A carga que o usuário usou pela última vez em cada exercício do CATÁLOGO.
+///
+/// Ficava em `ExercicioSessao.ultimoPesoKg`, dentro da ficha — e isso estava
+/// errado: a carga é atributo do par (usuário, exercício), não da prescrição.
+/// Gerar um plano novo cria outra ficha, e a carga de todos os exercícios
+/// voltava a NULL; o usuário perdia o histórico de peso inteiro por ter pedido
+/// um plano novo.
+///
+/// Aqui ela sobrevive à troca de ficha e continua valendo mesmo que o exercício
+/// reapareça em outra sessão ou outro split.
+///
+/// Uma linha por par, sobrescrita a cada treino registrado: não é histórico do
+/// que foi levantado, é só o valor que o app pré-preenche ao abrir a série.
+model CargaExercicio {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  exercicioId  Int
+  pesoKg       Float
+  atualizadoEm DateTime @updatedAt
+
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  exercicio Exercicio @relation(fields: [exercicioId], references: [id])
+
+  @@unique([usuarioId, exercicioId])
 }
 
 // ---------------------------------------------------------------------------

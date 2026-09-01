@@ -62,6 +62,12 @@ export default class PlanRepository {
                 // no Usuario justamente para não ter duas cópias.
                 pesos: { orderBy: { registradoEm: "desc" }, take: 1 },
 
+                // A carga de cada exercício vem daqui, e não da ficha: ela
+                // pertence ao par (usuário, exercício do catálogo) e precisa
+                // sobreviver à troca de ficha. Ver o comentário de
+                // CargaExercicio no schema.
+                cargas: { select: { exercicioId: true, pesoKg: true } },
+
                 fichasTreino: {
                     where: { ativa: true },
                     take: 1,

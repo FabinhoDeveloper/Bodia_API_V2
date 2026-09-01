@@ -97,8 +97,6 @@ export default class UserRepository {
                                             repeticoes: exercicio.repeticoes,
                                             descansoSegundos: exercicio.descansoSegundos,
                                             ordem: posicao,
-                                            // ultimoPesoKg fica null: o usuário
-                                            // ainda não fez este exercício.
                                         })),
                                     },
                                 })),

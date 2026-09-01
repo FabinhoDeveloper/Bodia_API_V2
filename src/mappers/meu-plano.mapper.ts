@@ -11,8 +11,10 @@ type FichaAlimentacao = UsuarioComPlano["fichasAlimentacao"][number];
  * Converte o que veio do banco no formato que as telas principais consomem —
  * Home, Treino, Dieta e Perfil, numa resposta só.
  *
- * Só monta a PRESCRIÇÃO. O que o usuário registrou (água do dia, refeição
- * marcada, treino concluído) ainda não é persistido e continua local no app.
+ * Só monta a PRESCRIÇÃO. O que o usuário registrou no dia (água, refeição
+ * marcada) tem rotas próprias e não passa por aqui — a única exceção é
+ * `ultimoPesoKg`, que é execução mas viaja junto porque a tela da série precisa
+ * dele no mesmo instante em que precisa do exercício.
  *
  * Fica aqui, e não no PlanService, porque é o mesmo tipo de trabalho do
  * plano.mapper — traduzir entre o formato interno e o contrato da API —, só
@@ -24,6 +26,13 @@ export default class MeuPlanoMapper {
         fichaTreino: FichaTreino,
         fichaAlimentacao: FichaAlimentacao,
     ): MeuPlano {
+        // A carga não está na ficha: vem de CargaExercicio, indexada pelo id do
+        // exercício no CATÁLOGO. O Map evita varrer a lista de cargas uma vez
+        // por exercício prescrito.
+        const cargaPorExercicio = new Map(
+            usuario.cargas.map((carga) => [carga.exercicioId, carga.pesoKg]),
+        );
+
         return {
             usuario: {
                 nome: usuario.nome,
@@ -45,7 +54,7 @@ export default class MeuPlanoMapper {
                         series: item.series,
                         repeticoes: item.repeticoes,
                         descansoSegundos: item.descansoSegundos,
-                        ultimoPesoKg: item.ultimoPesoKg,
+                        ultimoPesoKg: cargaPorExercicio.get(item.exercicioId) ?? null,
                     }));
 
                     return {
