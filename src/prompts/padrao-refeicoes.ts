@@ -28,8 +28,8 @@ const PADRAO_POR_REFEICAO: Record<string, string> = {
 
     Almoço:
         "arroz e feijão como base; uma proteína (frango, carne, peixe ou ovo); " +
-        "salada crua ou legume cozido; eventualmente farofa ou macarrão. " +
-        "É a refeição mais completa do dia.",
+        "salada crua ou legume cozido, temperada com azeite; eventualmente " +
+        "farofa ou macarrão. É a refeição mais completa do dia.",
 
     "Lanche da tarde":
         "pão ou tapioca com queijo, fruta, iogurte, castanhas, vitamina ou café. " +
@@ -37,7 +37,8 @@ const PADRAO_POR_REFEICAO: Record<string, string> = {
 
     Jantar:
         "parecido com o almoço, porém mais leve: pode ser arroz com proteína e " +
-        "legumes, sopa, ou pão com ovo. Aceita repetir o padrão do almoço.",
+        "legumes, sopa, ou pão com ovo — também com azeite no legume ou na " +
+        "salada. Aceita repetir o padrão do almoço.",
 
     Ceia:
         "muito leve: leite, iogurte, fruta, chá ou castanhas. " +

@@ -47,6 +47,7 @@ REGRAS INVIOLÁVEIS:
 2. Escolha SOMENTE alimentos da lista fornecida, pelo id exato. Nunca invente um item nem cite um id que não esteja na lista.
 3. Monte EXATAMENTE as refeições pedidas, na mesma ordem e com o nome exato. Não crie, não junte e não remova refeição.
 4. Use de 3 a 5 alimentos por refeição (2 a 4 em lanches e ceia).
+5. Toda refeição principal (almoço, jantar) precisa de UMA FONTE DE GORDURA — azeite, óleo, castanhas, queijo, manteiga ou abacate. Ela quase não aparece no prato e é o que fecha a caloria: sem ela, a porção de arroz e de pão teria de dobrar para chegar à mesma energia.
 
 ## O que faz um cardápio ser plausível
 
@@ -58,7 +59,7 @@ Como é cada refeição no Brasil:
 
 ${descreverPadrao(nomes)}
 
-Prefira alimentos comuns e baratos, do dia a dia. Combine grupos dentro da refeição (uma fonte de carboidrato, uma de proteína, algo de vegetal ou fruta) em vez de repetir o mesmo grupo.
+Prefira alimentos comuns e baratos, do dia a dia. Combine grupos dentro da refeição — uma fonte de carboidrato, uma de proteína, uma de gordura e algo de vegetal ou fruta — em vez de repetir o mesmo grupo.
 
 ## Formato da resposta
 
@@ -67,7 +68,7 @@ Responda SOMENTE com um objeto json válido, sem texto antes ou depois e sem blo
 {
   "refeicoes": [
     { "nome": "Café da manhã", "alimentoIds": [268, 489, 218, 122] },
-    { "nome": "Almoço", "alimentoIds": [3, 60, 407, 84, 130] }
+    { "nome": "Almoço", "alimentoIds": [3, 60, 407, 84, 260] }
   ]
 }`;
     }
