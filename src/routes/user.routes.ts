@@ -19,8 +19,9 @@ const router = Router();
 const perfilMapper = new PerfilMapper();
 const userRepository = new UserRepository(prismaClient, perfilMapper, new FichaMapper());
 
-// O PlanRepository entra aqui pela ficha ativa: é nela que as metas
-// recalculadas são gravadas quando o usuário registra um peso novo (RF34).
+// O PlanRepository entra aqui pela ficha de alimentação: é nela que as metas
+// recalculadas são gravadas quando o usuário registra um peso novo (RF34) — na
+// agendada, se houver uma, senão na vigente.
 const userController = new UserController(
     new UserService(
         userRepository,

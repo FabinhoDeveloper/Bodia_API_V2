@@ -259,12 +259,17 @@ export default class UserService {
 
     /**
      * Recalcula TMB, GET, meta calórica, macros e hidratação a partir do peso
-     * mais recente, e grava as metas novas na ficha ativa (RF34).
+     * mais recente, e grava as metas novas (RF34).
      *
      * Só as METAS são atualizadas. As refeições prescritas continuam as da ficha
      * antiga, montadas para a meta anterior — por isso `planoDesatualizado`: a
      * decisão de trocar o cardápio inteiro é do usuário (RF20), não um efeito
      * colateral de subir na balança.
+     *
+     * O alvo é a ficha AGENDADA quando o usuário já pediu um plano novo hoje, e
+     * só na falta dela a vigente — quem escolhe é o repository. Escrever na de
+     * hoje nesse caso mudaria o denominador contra o qual ele já comeu, que é a
+     * incoerência que a vigência da ficha existe para tirar da tela.
      */
     private async recalcular(usuarioId: string): Promise<ResumoPeso> {
         const perfil = await this.pesoRepository.buscarPerfil(usuarioId);
@@ -278,7 +283,7 @@ export default class UserService {
         );
         const metas = this.metasDe(resultado);
 
-        const tinhaFicha = await this.planRepository.atualizarMetasDaFichaAtiva(
+        const tinhaFicha = await this.planRepository.atualizarMetasDaProximaFicha(
             usuarioId,
             metas,
         );

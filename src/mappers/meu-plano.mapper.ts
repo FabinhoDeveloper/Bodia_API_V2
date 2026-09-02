@@ -1,3 +1,4 @@
+import { diaISO } from "../config/fuso";
 import PlanRepository from "../repositories/plan.repository";
 import { MeuPlano } from "../types/plano.types";
 
@@ -21,10 +22,17 @@ type FichaAlimentacao = UsuarioComPlano["fichasAlimentacao"][number];
  * que na direção da leitura.
  */
 export default class MeuPlanoMapper {
+    /**
+     * `vigenciaAgendada` é o instante em que o plano gerado por último entra em
+     * vigor, ou null quando não há nada a caminho. Vira dia local aqui, com o
+     * mesmo `diaISO` que recorta o dia dos registros — a data que o app exibe
+     * nunca é derivada do relógio do aparelho.
+     */
     montar(
         usuario: UsuarioComPlano,
         fichaTreino: FichaTreino,
         fichaAlimentacao: FichaAlimentacao,
+        vigenciaAgendada: Date | null,
     ): MeuPlano {
         // A carga não está na ficha: vem de CargaExercicio, indexada pelo id do
         // exercício no CATÁLOGO. O Map evita varrer a lista de cargas uma vez
@@ -95,6 +103,9 @@ export default class MeuPlanoMapper {
                     })),
                 })),
             },
+            planoAgendado: vigenciaAgendada
+                ? { vigenteDe: diaISO(vigenciaAgendada) }
+                : null,
         };
     }
 }

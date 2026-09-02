@@ -37,9 +37,9 @@ export interface RefeicaoRepository {
     remover(usuarioId: string, refeicaoId: string, periodo: Periodo): Promise<number>;
 }
 
-/** A ficha ativa como o PlanRepository a devolve. */
-type FichaAtiva = NonNullable<
-    Awaited<ReturnType<PlanRepository["buscarFichaAlimentacaoAtiva"]>>
+/** A ficha EM VIGOR hoje como o PlanRepository a devolve. */
+type FichaVigente = NonNullable<
+    Awaited<ReturnType<PlanRepository["buscarFichaAlimentacaoVigente"]>>
 >;
 
 export default class RefeicaoService {
@@ -130,9 +130,17 @@ export default class RefeicaoService {
         return this.refeicaoRepository.listarPorPeriodo(usuarioId, periodo);
     }
 
-    /** A ficha ativa, ou 404 — os três métodos públicos falham do mesmo jeito. */
-    private async exigirFicha(usuarioId: string): Promise<FichaAtiva> {
-        const ficha = await this.planRepository.buscarFichaAlimentacaoAtiva(usuarioId);
+    /**
+     * A ficha em vigor hoje, ou 404 — os três métodos públicos falham do mesmo
+     * jeito.
+     *
+     * VIGENTE, e não simplesmente ativa: um plano gerado hoje pode estar
+     * agendado para amanhã, e as refeições dele não são marcáveis ainda. A
+     * conferência de posse do `refeicaoId` herda isso de graça — o id da dieta
+     * de amanhã não está entre os desta ficha e cai no mesmo 404.
+     */
+    private async exigirFicha(usuarioId: string): Promise<FichaVigente> {
+        const ficha = await this.planRepository.buscarFichaAlimentacaoVigente(usuarioId);
 
         if (!ficha) {
             throw new NaoEncontradoError("Usuário não encontrado ou sem plano ativo");
@@ -144,14 +152,14 @@ export default class RefeicaoService {
     /**
      * Recorta o dia no fuso do usuário e soma os macros do que foi marcado.
      *
-     * A soma sai do JOIN com a prescrição, não da ficha ativa: uma refeição
+     * A soma sai do JOIN com a prescrição, não da ficha vigente: uma refeição
      * marcada antes de o usuário gerar um plano novo continua contando com os
      * macros da ficha em que foi prescrita.
      */
     private async montarDia(
         usuarioId: string,
         instante: Date,
-        ficha: FichaAtiva,
+        ficha: FichaVigente,
     ): Promise<ResumoRefeicoesDia> {
         const registros = await this.refeicaoRepository.listarPorPeriodo(
             usuarioId,

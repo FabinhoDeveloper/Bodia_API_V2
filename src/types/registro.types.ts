@@ -59,7 +59,7 @@ export interface ResumoRefeicoesDia {
     registros: RegistroRefeicaoComPrescricao[];
     consumido: Macros;
     metas: Macros;
-    /** Quantas refeições a ficha ativa prescreve — o denominador de "faltam N". */
+    /** Quantas refeições a ficha vigente prescreve — o denominador de "faltam N". */
     totalRefeicoes: number;
 }
 

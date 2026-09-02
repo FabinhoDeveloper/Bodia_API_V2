@@ -1,3 +1,4 @@
+import { inicioDoProximoDia } from "../../src/config/fuso";
 import NaoEncontradoError from "../../src/errors/nao-encontrado.error";
 import ValidationError from "../../src/errors/validation.error";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
@@ -7,6 +8,7 @@ import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PlanoMapper from "../../src/mappers/plano.mapper";
 import PesoRepository from "../../src/repositories/peso.repository";
 import PlanRepository from "../../src/repositories/plan.repository";
+import RefeicaoRepository from "../../src/repositories/refeicao.repository";
 import EngineService from "../../src/services/engine.service";
 import PlanService from "../../src/services/plan.service";
 import { OnboardingRequest, PlanoValidado } from "../../src/types/plano.types";
@@ -82,6 +84,7 @@ function planoServiceFake(gerar = jest.fn().mockResolvedValue(PLANO_FAKE)) {
  */
 type PlanRepositoryFake = { [K in keyof PlanRepository]: jest.Mock };
 type PesoRepositoryFake = { [K in keyof PesoRepository]: jest.Mock };
+type RefeicaoRepositoryFake = { [K in keyof RefeicaoRepository]: jest.Mock };
 
 function repositoryFake(retorno: unknown) {
     return {
@@ -89,8 +92,22 @@ function repositoryFake(retorno: unknown) {
         buscarRestricoes: jest
             .fn()
             .mockResolvedValue({ restricoesAlimentares: [], restricoesFisicas: [] }),
-        substituirFichas: jest.fn().mockResolvedValue(undefined),
+        gravarFichas: jest.fn().mockResolvedValue(undefined),
+        // Por padrão o usuário TEM ficha em vigor: é o estado normal de quem
+        // pede outro cardápio, e é o que faz a vigência ser adiável.
+        buscarFichaAlimentacaoVigente: jest.fn().mockResolvedValue({ refeicoes: [] }),
+        buscarVigenciaAgendada: jest.fn().mockResolvedValue(null),
     } as unknown as PlanRepositoryFake;
+}
+
+/**
+ * O único método que o PlanService usa daqui: quantas refeições foram marcadas
+ * hoje. O padrão é 1 — dia "sujo", que é o caso em que a vigência é adiada.
+ */
+function refeicaoRepositoryFake(marcadasHoje = 1) {
+    return {
+        contarNoPeriodo: jest.fn().mockResolvedValue(marcadasHoje),
+    } as unknown as RefeicaoRepositoryFake;
 }
 
 /** O usuário como o banco o guarda — só o que o motor consome. */
@@ -122,11 +139,16 @@ function servicoDeGeracao(gerador = planoServiceFake()) {
         pesoRepositoryFake() as unknown as PesoRepository,
         new PerfilMapper(),
         new ConferenciaMapper(),
+        refeicaoRepositoryFake() as unknown as RefeicaoRepository,
     );
 }
 
 /** PlanService montado para exercitar `consultar` — a geração não é usada aqui. */
-function servicoDeConsulta(retorno: unknown, pesoRepository = pesoRepositoryFake()) {
+function servicoDeConsulta(
+    retorno: unknown,
+    pesoRepository = pesoRepositoryFake(),
+    refeicaoRepository = refeicaoRepositoryFake(),
+) {
     const repository = repositoryFake(retorno);
     const gerador = planoServiceFake();
 
@@ -134,6 +156,7 @@ function servicoDeConsulta(retorno: unknown, pesoRepository = pesoRepositoryFake
         repository,
         gerador,
         pesoRepository,
+        refeicaoRepository,
         service: new PlanService(
             new EngineService(),
             gerador,
@@ -143,6 +166,7 @@ function servicoDeConsulta(retorno: unknown, pesoRepository = pesoRepositoryFake
             pesoRepository as unknown as PesoRepository,
             new PerfilMapper(),
             new ConferenciaMapper(),
+            refeicaoRepository as unknown as RefeicaoRepository,
         ),
     };
 }
@@ -448,15 +472,16 @@ describe("PlanService.regenerar", () => {
         });
     });
 
-    it("substitui as fichas em vez de criar ficha nova solta", async () => {
+    it("grava as fichas em vez de criar ficha nova solta", async () => {
         const { service, repository } = servicoDeConsulta(USUARIO_COM_PLANO);
 
         await service.regenerar("usuario-1");
 
-        expect(repository.substituirFichas).toHaveBeenCalledWith(
+        expect(repository.gravarFichas).toHaveBeenCalledWith(
             "usuario-1",
             expect.objectContaining({ metas: expect.any(Object) }),
             expect.objectContaining({ metabolismo: expect.any(Object) }),
+            expect.any(Date),
         );
     });
 
@@ -478,6 +503,87 @@ describe("PlanService.regenerar", () => {
         );
 
         await expect(service.regenerar("usuario-1")).rejects.toThrow(NaoEncontradoError);
-        expect(repository.substituirFichas).not.toHaveBeenCalled();
+        expect(repository.gravarFichas).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * A vigência da ficha regenerada.
+ *
+ * Trocar o cardápio no meio do dia deixava as calorias já comidas — que
+ * continuam contando, pelo FK com a ficha antiga — medidas contra uma meta nova,
+ * e todos os cards desmarcados, porque os `refeicaoId` registrados são os da
+ * prescrição anterior.
+ */
+describe("PlanService.regenerar — quando o plano novo passa a valer", () => {
+    const USUARIO_COM_PLANO = usuarioNoBanco();
+
+    /** O `vigenteDe` que o service passou ao repository. */
+    async function vigenciaDe(
+        refeicaoRepository: ReturnType<typeof refeicaoRepositoryFake>,
+        ajustar: (repository: PlanRepositoryFake) => void = () => {},
+    ): Promise<Date> {
+        const { service, repository } = servicoDeConsulta(
+            USUARIO_COM_PLANO,
+            pesoRepositoryFake(),
+            refeicaoRepository,
+        );
+        ajustar(repository);
+
+        await service.regenerar("usuario-1");
+
+        return repository.gravarFichas.mock.calls[0][3] as Date;
+    }
+
+    it("adia para a próxima meia-noite quando o dia já tem refeição marcada", async () => {
+        const antes = new Date();
+
+        const vigenteDe = await vigenciaDe(refeicaoRepositoryFake(2));
+
+        expect(vigenteDe).toEqual(inicioDoProximoDia(antes));
+        expect(vigenteDe.getTime()).toBeGreaterThan(antes.getTime());
+    });
+
+    // Sem nada marcado não há conta a bagunçar, e esperar até a meia-noite seria
+    // uma espera artificial para quem gera o plano às 7h da manhã.
+    it("vale na hora quando o dia ainda não tem nenhuma refeição marcada", async () => {
+        const antes = Date.now();
+
+        const vigenteDe = await vigenciaDe(refeicaoRepositoryFake(0));
+
+        expect(vigenteDe.getTime()).toBeGreaterThanOrEqual(antes);
+        expect(vigenteDe.getTime()).toBeLessThan(inicioDoProximoDia(new Date()).getTime());
+    });
+
+    // Adiar deixaria o GET /api/plano em 404 até a meia-noite.
+    it("vale na hora quando o usuário não tem ficha em vigor", async () => {
+        const antes = Date.now();
+
+        const vigenteDe = await vigenciaDe(refeicaoRepositoryFake(3), (repository) => {
+            repository.buscarFichaAlimentacaoVigente.mockResolvedValue(null);
+        });
+
+        expect(vigenteDe.getTime()).toBeGreaterThanOrEqual(antes);
+        expect(vigenteDe.getTime()).toBeLessThan(inicioDoProximoDia(new Date()).getTime());
+    });
+
+    // É este par — o plano de hoje mais a data do que vem — que a tela da dieta
+    // usa para explicar por que o cardápio não mudou.
+    it("devolve o plano EM VIGOR, com a data do que está agendado", async () => {
+        const { service, repository } = servicoDeConsulta(USUARIO_COM_PLANO);
+        repository.buscarVigenciaAgendada.mockResolvedValue(
+            new Date("2026-09-03T03:00:00.000Z"),
+        );
+
+        const plano = await service.regenerar("usuario-1");
+
+        expect(plano.dieta.refeicoes[0].id).toBe("r1");
+        expect(plano.planoAgendado).toEqual({ vigenteDe: "2026-09-03" });
+    });
+
+    it("devolve planoAgendado nulo quando não há nada a caminho", async () => {
+        const { service } = servicoDeConsulta(USUARIO_COM_PLANO);
+
+        expect((await service.consultar("usuario-1")).planoAgendado).toBeNull();
     });
 });

@@ -10,7 +10,7 @@ import HidratacaoService from "../services/hidratacao.service";
 
 const router = Router();
 
-// O PlanRepository entra aqui só pela meta de água da ficha ativa — ele é o
+// O PlanRepository entra aqui só pela meta de água da ficha vigente — ele é o
 // dono de FichaAlimentacao.
 const hidratacaoController = new HidratacaoController(
     new HidratacaoService(

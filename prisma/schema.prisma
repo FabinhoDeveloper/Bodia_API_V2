@@ -168,17 +168,35 @@ model RegistroPeso {
 /// O treino prescrito ao usuário, com os números que o CalculoService produziu.
 ///
 /// Gerar um plano novo NÃO apaga o anterior: cria outra ficha e marca a antiga
-/// como inativa. Preserva a evolução das metas e, quando o treino executado for
-/// modelado, mantém válida a ficha em que cada treino foi feito.
+/// como inativa. Preserva a evolução das metas e mantém válida a ficha em que
+/// cada treino foi feito.
 ///
-/// ATENÇÃO: "só uma ficha ativa por usuário" não é garantido por constraint —
-/// exigiria índice parcial em SQL cru. É responsabilidade do repository
-/// desativar a anterior na MESMA transação em que cria a nova.
+/// `ativa` significa NÃO SUBSTITUÍDA, e não "em vigor hoje" — quem responde
+/// isso é `vigenteDe`. Existem no máximo DUAS ativas por usuário: a vigente e a
+/// agendada para amanhã.
+///
+///   vigente  = ativa E vigenteDe <= agora, a de maior vigenteDe
+///   agendada = ativa E vigenteDe > agora
+///
+/// ATENÇÃO: esse "no máximo duas" não é garantido por constraint — exigiria
+/// índice parcial em SQL cru. É responsabilidade do repository, na MESMA
+/// transação em que cria a nova.
 model FichaTreino {
   id        String   @id @default(uuid())
   usuarioId String
   ativa     Boolean  @default(true)
   criadaEm  DateTime @default(now())
+
+  /// O primeiro instante em que esta ficha vale — meia-noite LOCAL do dia em
+  /// que entra em vigor. A conta é de `config/fuso.ts`, porque o servidor roda
+  /// em UTC e o usuário não.
+  ///
+  /// A ficha do cadastro nasce valendo (o default cobre). A regenerada num dia
+  /// que já tem refeição marcada nasce valendo a partir de amanhã: trocar o
+  /// plano às 14h deixava as calorias já comidas contando contra uma meta nova
+  /// e os cards da ficha nova todos desmarcados, porque os `refeicaoId`
+  /// registrados são os da ficha anterior.
+  vigenteDe DateTime @default(now())
 
   split                String
   diasPorSemana        Int
@@ -187,7 +205,7 @@ model FichaTreino {
   usuario Usuario        @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   sessoes SessaoTreino[]
 
-  @@index([usuarioId, ativa])
+  @@index([usuarioId, ativa, vigenteDe])
 }
 
 /// Um treino da semana ("Upper", "Push"). O grupo muscular exibido no card
@@ -243,12 +261,19 @@ model ExercicioSessao {
 // ---------------------------------------------------------------------------
 
 /// A dieta prescrita, com os números do CalculoService. Mesma regra de
-/// histórico da FichaTreino: a anterior é desativada, não apagada.
+/// histórico da FichaTreino: a anterior é desativada, não apagada — e mesma
+/// regra de vigência, inclusive o significado de `ativa`.
 model FichaAlimentacao {
   id        String   @id @default(uuid())
   usuarioId String
   ativa     Boolean  @default(true)
   criadaEm  DateTime @default(now())
+
+  /// Ver `FichaTreino.vigenteDe` — as duas fichas de um plano são geradas
+  /// juntas e entram em vigor no mesmo instante. É aqui que ela pesa mais: as
+  /// METAS do dia (calorias, macros, água) moram nesta ficha, e são elas que
+  /// não podem mudar depois de o usuário já ter comido contra as anteriores.
+  vigenteDe DateTime @default(now())
 
   /// Metabolismo que originou as metas (Mifflin-St Jeor × fator de atividade).
   tmb  Int
@@ -263,7 +288,7 @@ model FichaAlimentacao {
   usuario   Usuario    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   refeicoes Refeicao[]
 
-  @@index([usuarioId, ativa])
+  @@index([usuarioId, ativa, vigenteDe])
 }
 
 model Refeicao {

@@ -1,4 +1,10 @@
-import { diaISO, interpretarDia, janelaDaSemana, janelaDoDia } from "../../src/config/fuso";
+import {
+    diaISO,
+    inicioDoProximoDia,
+    interpretarDia,
+    janelaDaSemana,
+    janelaDoDia,
+} from "../../src/config/fuso";
 
 /**
  * O motivo destes testes existirem: o servidor roda em UTC e o usuário não.
@@ -84,6 +90,38 @@ describe("fuso", () => {
 
             // 23h de 31/12 em Brasília ainda é 31/12.
             expect(viradaDeAno.de.toISOString()).toBe("2025-12-31T03:00:00.000Z");
+        });
+    });
+
+    // É a data em que uma ficha regenerada entra em vigor. Cortar pela data UTC
+    // faria o plano gerado às 22h valer daqui a duas horas em vez de amanhã.
+    describe("inicioDoProximoDia", () => {
+        it("devolve a próxima meia-noite de Brasília, que é 03:00Z", () => {
+            const virada = inicioDoProximoDia(new Date("2026-08-19T15:00:00.000Z"));
+
+            expect(virada.toISOString()).toBe("2026-08-20T03:00:00.000Z");
+        });
+
+        it("para quem gera o plano às 22h, o dia seguinte ainda é amanhã", () => {
+            // 01:12Z do dia 19 é 22:12 do dia 18 em Brasília: a virada é a
+            // meia-noite do dia 19, e não a do dia 20.
+            const virada = inicioDoProximoDia(new Date("2026-08-19T01:12:00.000Z"));
+
+            expect(virada.toISOString()).toBe("2026-08-19T03:00:00.000Z");
+        });
+
+        it("é sempre estritamente futuro em relação ao instante recebido", () => {
+            const instante = new Date("2026-08-19T02:59:59.000Z");
+
+            expect(inicioDoProximoDia(instante).getTime()).toBeGreaterThan(
+                instante.getTime(),
+            );
+        });
+
+        it("vira o ano corretamente", () => {
+            expect(inicioDoProximoDia(new Date("2026-01-01T02:00:00.000Z")).toISOString()).toBe(
+                "2026-01-01T03:00:00.000Z",
+            );
         });
     });
 

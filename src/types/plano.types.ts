@@ -269,6 +269,18 @@ export interface MeuPlano {
             itens: { alimentoId: number; nome: string; gramas: number; kcal: number }[];
         }[];
     };
+    /**
+     * O plano que o usuário mandou gerar e que ainda não entrou em vigor
+     * (RF20). `vigenteDe` é o dia local em "AAAA-MM-DD" — o mesmo formato de
+     * `ResumoRefeicoesDia.dia`. Nulo quando não há nada agendado.
+     *
+     * Fica no TOPO, e não dentro de `dieta`, porque um plano é gerado inteiro:
+     * o treino e a dieta agendados entram em vigor no mesmo instante.
+     *
+     * É só a DATA, e não a prescrição de amanhã: a tela só precisa saber que
+     * existe algo a caminho para explicar por que o cardápio de hoje não mudou.
+     */
+    planoAgendado: { vigenteDe: string } | null;
 }
 
 // ---------------------------------------------------------------------------

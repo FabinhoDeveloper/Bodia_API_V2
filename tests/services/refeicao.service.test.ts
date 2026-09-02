@@ -75,10 +75,10 @@ function montar({
     };
 
     const planRepository = {
-        buscarFichaAlimentacaoAtiva: jest.fn(async () =>
+        buscarFichaAlimentacaoVigente: jest.fn(async () =>
             temFicha ? { ...METAS, refeicoes: idsDaFicha.map((id) => ({ id })) } : null,
         ),
-    } as unknown as PlanRepository & { buscarFichaAlimentacaoAtiva: jest.Mock };
+    } as unknown as PlanRepository & { buscarFichaAlimentacaoVigente: jest.Mock };
 
     return {
         refeicaoRepository,
@@ -96,7 +96,7 @@ describe("RefeicaoService", () => {
             await expect(service.registrar(USUARIO, "")).rejects.toBeInstanceOf(ValidationError);
             // Falha antes de qualquer consulta — é o que deixa o smoke test
             // exercitar esta rota sem banco.
-            expect(planRepository.buscarFichaAlimentacaoAtiva).not.toHaveBeenCalled();
+            expect(planRepository.buscarFichaAlimentacaoVigente).not.toHaveBeenCalled();
         });
 
         it("marca a refeição e devolve o dia já somado", async () => {

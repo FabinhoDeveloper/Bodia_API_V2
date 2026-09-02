@@ -134,7 +134,7 @@ export interface ResumoPeso {
     historico: RegistroPesoDTO[];
     /**
      * As metas depois do recálculo (RF34) — TMB, GET, calorias, macros e água.
-     * Nulo quando o usuário ainda não tem ficha ativa.
+     * Nulo quando o usuário ainda não tem ficha nenhuma.
      */
     metas: {
         tmb: number;

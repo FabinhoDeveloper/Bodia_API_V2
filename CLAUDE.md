@@ -579,8 +579,8 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
-| `GET` | `/api/plano` | → **200** o plano ativo no formato das telas (Home, Treino, Dieta, Perfil) | **404** usuário sem plano ativo |
-| `POST` | `/api/plano/regenerar` | → **200** o plano novo, já gravado (RF20). O perfil vem do BANCO, não do payload: pedir outro cardápio não é ocasião para o app reenviar sexo, altura e objetivo. A ficha anterior é desativada, nunca apagada. | **404** usuário sem perfil; **500** se a IA falhar |
+| `GET` | `/api/plano` | → **200** o plano **em vigor hoje** no formato das telas (Home, Treino, Dieta, Perfil). `planoAgendado` traz o dia em que o plano gerado por último entra em vigor, ou `null`. | **404** usuário sem plano em vigor |
+| `POST` | `/api/plano/regenerar` | → **200** o plano **em vigor**, no mesmo formato do `GET`. O perfil vem do BANCO, não do payload: pedir outro cardápio não é ocasião para o app reenviar sexo, altura e objetivo. O plano novo é gravado na hora, mas só ENTRA EM VIGOR amanhã se o dia já tiver refeição marcada — ver "A ficha nova entra em vigor amanhã". A ficha anterior é desativada, nunca apagada. | **404** usuário sem perfil; **500** se a IA falhar |
 
 ### Perfil, peso e conta — autenticado
 
@@ -588,7 +588,7 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 |---|---|---|---|
 | `GET` | `/api/perfil` | → **200** o perfil no vocabulário da API (RF10) | **404** usuário inexistente |
 | `PATCH` | `/api/perfil` | Só os campos que mudaram → **200** `{ perfil, recalculado, metas, planoDesatualizado }`. Campo ausente é campo NÃO alterado — daí PATCH e não PUT. `recalculado` é `false` quando o usuário mexeu só nas restrições (FA02 do UC06). | **400** campo inválido |
-| `POST` | `/api/peso` | `{ pesoKg }` → **201** `{ historico, metas, planoDesatualizado }`. Grava o peso E recalcula TMB, GET, meta calórica, macros e água na ficha ativa (RF33 + RF34), na mesma chamada. | **400** pesoKg fora de 25–400 |
+| `POST` | `/api/peso` | `{ pesoKg }` → **201** `{ historico, metas, planoDesatualizado }`. Grava o peso E recalcula TMB, GET, meta calórica, macros e água (RF33 + RF34), na mesma chamada. As metas caem na ficha **agendada** quando existe uma, e só na falta dela na vigente. | **400** pesoKg fora de 25–400 |
 | `GET` | `/api/peso` | → **200** mesmo formato, sem gravar nada | **404** usuário inexistente |
 | `DELETE` | `/api/conta` | `{ senha }` → **204**. Apaga tudo em cascata (RF35, LGPD). Exige a senha **além** do token: a exclusão é irreversível, e o token sozinho tornaria um aparelho desbloqueado por alguns segundos suficiente para destruir o histórico de alguém. | **401** senha incorreta |
 
@@ -623,11 +623,35 @@ Por isso `POST /api/refeicao` é **idempotente**: marcar de novo devolve o dia c
 
 ### O `consumido` é somado no servidor, e isso não é detalhe
 
-`ResumoRefeicoesDia.consumido` vem do JOIN entre `RegistroRefeicao` e `Refeicao`, não da ficha ativa.
+`ResumoRefeicoesDia.consumido` vem do JOIN entre `RegistroRefeicao` e `Refeicao`, não da ficha vigente.
 
-O motivo é o plano regenerado no meio do dia: a refeição marcada de manhã aponta para a `Refeicao` da ficha **antiga**, que continua no banco (desativada, nunca apagada). O backend lê os macros dela pelo FK e a conta do dia continua certa. Se o app somasse — como fazia com a antiga `somarConsumido` —, essas calorias sumiriam, porque o app só tem em mãos a ficha ativa.
+O motivo é o plano regenerado no meio do dia: a refeição marcada de manhã aponta para a `Refeicao` da ficha **antiga**, que continua no banco (desativada, nunca apagada). O backend lê os macros dela pelo FK e a conta do dia continua certa. Se o app somasse — como fazia com a antiga `somarConsumido` —, essas calorias sumiriam, porque o app só tem em mãos a ficha vigente.
 
 Pela mesma lógica, a resposta **não** traz um campo `refeicoesFeitas: string[]`: ele seria derivável de `registros` e as duas cópias poderiam divergir.
+
+### A ficha nova entra em vigor amanhã
+
+Somar pelo FK mantinha a CONTA certa, mas não bastava para a tela. Regenerando às 14h, o que o usuário via era: 1000 kcal consumidas no cabeçalho e **todos os cards desmarcados** — porque `DietaScreen` monta as marcações com `new Set(registros.map(r => r.refeicaoId))`, e esses ids são os da ficha antiga, que não batem com nenhum `refeicoes[].id` da nova. A meta calórica, ainda por cima, mudava depois de a pessoa já ter comido contra a anterior. E remarcar o mesmo almoço na ficha nova **somava duas vezes**, já que `buscarNoDia` casa por `refeicaoId`.
+
+Por isso `FichaTreino` e `FichaAlimentacao` ganharam **`vigenteDe`**, e `ativa` mudou de significado:
+
+- `ativa` = **não substituída**. No máximo DUAS por usuário: a vigente e a agendada.
+- **vigente** = `ativa` e `vigenteDe <= agora`, a de maior `vigenteDe` (daí o `orderBy` em toda consulta — sem ele, a de ontem e a que virou à meia-noite empatariam).
+- **agendada** = `ativa` e `vigenteDe > agora`.
+
+Quem decide a data é `PlanService.decidirVigencia`: a próxima meia-noite local (`inicioDoProximoDia`, em `config/fuso.ts`), **exceto** quando o dia ainda não tem nenhuma refeição marcada — aí não há conta a bagunçar e o plano vale na hora. Usuário sem ficha vigente também recebe na hora, senão o `GET /api/plano` ficaria em 404 até a meia-noite.
+
+Adia o plano INTEIRO, treino junto: as metas do dia moram na ficha de alimentação, e deixar treino e dieta de gerações diferentes convivendo trocaria os cards da semana no meio dela.
+
+Só refeição decide o dia "sujo". A hidratação também tem meta na ficha, mas `RegistroHidratacao` não aponta para ela — a água registrada não muda de dono quando a meta muda.
+
+Três consequências que saem de graça do filtro de vigência:
+
+- `POST /api/refeicao` **recusa** o id de uma refeição agendada: ele não está entre os da ficha vigente, e cai no mesmo 404 da conferência de posse. A dieta de amanhã não é marcável hoje.
+- `atualizarMetasDaProximaFicha` (peso e perfil) escreve na agendada quando ela existe — mexer na de hoje mudaria o denominador contra o qual o usuário já comeu.
+- `MeuPlano.planoAgendado` leva ao app só a DATA, não a prescrição de amanhã: a tela precisa explicar por que o cardápio não mudou, não mostrá-lo.
+
+O "no máximo duas ativas" **não é constraint no banco** — exigiria índice parcial em SQL cru. A garantia é de `PlanRepository.gravarFichas`, que na mesma transação desativa tudo o que está ativo exceto o par em vigor (ou tudo, quando a vigência é imediata). Mesma natureza do "um registro de refeição por dia".
 
 ### Por que o dia é recortado no servidor (`config/fuso.ts`)
 

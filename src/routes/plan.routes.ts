@@ -21,6 +21,7 @@ import TreinoPrompt from "../prompts/treino.prompt";
 import autenticacao from "../middlewares/autenticacao";
 import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
+import RefeicaoRepository from "../repositories/refeicao.repository";
 import AiService from "../services/ai.service";
 import EngineService from "../services/engine.service";
 import PlanService from "../services/plan.service";
@@ -54,6 +55,9 @@ console.log(`[onboarding] gerador de plano: ${simularIa ? "SIMULADO (fixture)" :
 // O PesoRepository entra aqui pelo PERFIL: regenerar lê os dados do banco, e
 // não do payload — o usuário não troca o próprio sexo numa requisição cujo
 // propósito é pedir outro cardápio.
+//
+// O RefeicaoRepository entra por UMA pergunta: o usuário já marcou alguma
+// refeição hoje? É ela que decide se o plano novo vale agora ou só amanhã.
 const planController = new PlanController(
     new PlanService(
         new EngineService(),
@@ -64,6 +68,7 @@ const planController = new PlanController(
         new PesoRepository(prismaClient),
         new PerfilMapper(),
         new ConferenciaMapper(),
+        new RefeicaoRepository(prismaClient),
     ),
 );
 
@@ -72,8 +77,10 @@ const planController = new PlanController(
 router.post("/onboarding", planController.gerar);
 // O usuarioId saiu da URL: quem pede o plano é quem o token diz que é.
 router.get("/plano", autenticacao, planController.buscar);
-// RF20: gera outro plano para quem já tem conta e o grava na hora, desativando
-// a ficha anterior. O perfil vem do banco.
+// RF20: gera outro plano para quem já tem conta e o grava na hora. O perfil vem
+// do banco. GRAVA na hora, mas só ENTRA EM VIGOR amanhã se o dia já tiver
+// refeição marcada — a resposta é o plano em vigor, com `planoAgendado` dizendo
+// a partir de quando o novo vale.
 router.post("/plano/regenerar", autenticacao, planController.regenerar);
 
 export default router;

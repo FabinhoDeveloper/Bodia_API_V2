@@ -5,9 +5,14 @@ import { ResultadoCalculo } from "../types/perfil.types";
 import { PlanoDTO } from "../types/plano.types";
 
 /**
- * Leitura do plano ativo de um usuário. Traz tudo numa consulta só — usuário,
+ * Leitura do plano vigente de um usuário. Traz tudo numa consulta só — usuário,
  * peso mais recente, ficha de treino e ficha de alimentação — porque as telas
  * principais do app precisam de tudo junto ao abrir.
+ *
+ * VIGENTE, e não "ativa": desde que a regeneração passou a valer só no dia
+ * seguinte, `ativa` significa NÃO SUBSTITUÍDA, e um usuário pode ter duas — a
+ * que vale hoje e a agendada para amanhã. Quem separa as duas é `vigenteDe`.
+ * Ver o comentário de `FichaTreino` no schema.
  */
 export default class PlanRepository {
     private readonly prismaClient;
@@ -19,18 +24,21 @@ export default class PlanRepository {
     }
 
     /**
-     * Troca as fichas ativas do usuário pelas do plano novo (RF20).
+     * O filtro da ficha EM VIGOR num instante: ativa e já vigente.
      *
-     * A anterior é DESATIVADA, nunca apagada. É o que preserva a evolução das
-     * metas e, principalmente, o que mantém o histórico correto: uma refeição
-     * marcada de manhã aponta para a `Refeicao` da ficha antiga, e o registro de
-     * treino para a `SessaoTreino` dela — apagar a ficha levaria junto o que o
-     * usuário fez no dia.
-     *
-     * Tudo numa transação porque "só uma ficha ativa por usuário" não é
-     * constraint no banco: entre desativar e criar não pode haver janela com
-     * zero fichas ativas nem com duas.
+     * Vem acompanhado de `orderBy: { vigenteDe: "desc" }` em toda consulta que
+     * o usa — sem ele, a ficha de ontem e a que entrou em vigor à meia-noite
+     * empatariam e a escolha seria loteria.
      */
+    private static vigenteEm(usuarioId: string, agora: Date) {
+        return { usuarioId, ativa: true, vigenteDe: { lte: agora } };
+    }
+
+    /** O filtro da ficha AGENDADA: ativa, mas ainda não em vigor. */
+    private static agendadaEm(usuarioId: string, agora: Date) {
+        return { usuarioId, ativa: true, vigenteDe: { gt: agora } };
+    }
+
     /**
      * As restrições declaradas pelo usuário, já separadas por tipo.
      *
@@ -56,31 +64,107 @@ export default class PlanRepository {
         };
     }
 
-    async substituirFichas(
+    /**
+     * Grava as fichas do plano novo com a vigência que o service decidiu (RF20).
+     *
+     * A anterior é DESATIVADA, nunca apagada. É o que preserva a evolução das
+     * metas e, principalmente, o que mantém o histórico correto: uma refeição
+     * marcada de manhã aponta para a `Refeicao` da ficha antiga, e o registro de
+     * treino para a `SessaoTreino` dela — apagar a ficha levaria junto o que o
+     * usuário fez no dia.
+     *
+     * Dois ramos, conforme `vigenteDe`:
+     *
+     * - **imediato** (`vigenteDe <= agora`): desativa TODAS as ativas e cria as
+     *   novas já valendo. É o caminho do dia sem nenhuma refeição marcada, e é
+     *   exatamente o comportamento que a rota tinha antes da vigência existir.
+     * - **agendado** (`vigenteDe > agora`): desativa todas as ativas EXCETO o
+     *   par que está em vigor, que precisa continuar respondendo pelo dia de
+     *   hoje. O "exceto" também limpa a ficha agendada de uma regeneração
+     *   anterior no mesmo dia — pedir dois planos hoje deixa valendo o segundo,
+     *   não os dois.
+     *
+     * Tudo numa transação porque o limite de fichas ativas não é constraint no
+     * banco: entre desativar e criar não pode haver janela com zero fichas em
+     * vigor nem com duas agendadas.
+     */
+    async gravarFichas(
         usuarioId: string,
         plano: PlanoDTO,
         resultado: ResultadoCalculo,
+        vigenteDe: Date,
     ): Promise<void> {
-        await this.prismaClient.$transaction([
-            this.prismaClient.fichaTreino.updateMany({
-                where: { usuarioId, ativa: true },
+        const agora = new Date();
+        const imediato = vigenteDe <= agora;
+
+        await this.prismaClient.$transaction(async (tx) => {
+            // Os ids do par em vigor, lidos DENTRO da transação: fora dela, uma
+            // virada de meia-noite entre a leitura e a escrita poderia preservar
+            // a ficha errada.
+            const [treinoVigente, dietaVigente] = imediato
+                ? [null, null]
+                : await Promise.all([
+                      tx.fichaTreino.findFirst({
+                          where: PlanRepository.vigenteEm(usuarioId, agora),
+                          orderBy: { vigenteDe: "desc" },
+                          select: { id: true },
+                      }),
+                      tx.fichaAlimentacao.findFirst({
+                          where: PlanRepository.vigenteEm(usuarioId, agora),
+                          orderBy: { vigenteDe: "desc" },
+                          select: { id: true },
+                      }),
+                  ]);
+
+            await tx.fichaTreino.updateMany({
+                where: {
+                    usuarioId,
+                    ativa: true,
+                    ...(treinoVigente ? { id: { not: treinoVigente.id } } : {}),
+                },
                 data: { ativa: false },
-            }),
-            this.prismaClient.fichaAlimentacao.updateMany({
-                where: { usuarioId, ativa: true },
+            });
+            await tx.fichaAlimentacao.updateMany({
+                where: {
+                    usuarioId,
+                    ativa: true,
+                    ...(dietaVigente ? { id: { not: dietaVigente.id } } : {}),
+                },
                 data: { ativa: false },
-            }),
-            this.prismaClient.fichaTreino.create({
-                data: { usuarioId, ...this.fichaMapper.treino(plano, resultado) },
-            }),
-            this.prismaClient.fichaAlimentacao.create({
-                data: { usuarioId, ...this.fichaMapper.alimentacao(plano, resultado) },
-            }),
-        ]);
+            });
+
+            await tx.fichaTreino.create({
+                data: { usuarioId, vigenteDe, ...this.fichaMapper.treino(plano, resultado) },
+            });
+            await tx.fichaAlimentacao.create({
+                data: { usuarioId, vigenteDe, ...this.fichaMapper.alimentacao(plano, resultado) },
+            });
+        });
     }
 
     /**
-     * Só a meta de água da ficha ativa — devolve null se o usuário não existe
+     * O dia em que o plano agendado entra em vigor, ou null se não há nenhum.
+     *
+     * Consulta à parte, e não um segundo `include` em `buscarPlanoAtivo`: o
+     * Prisma não deixa filtrar a MESMA relação duas vezes no mesmo `include`, e
+     * esta aqui custa uma coluna.
+     *
+     * Olha só a ficha de alimentação porque as duas fichas de um plano são
+     * gravadas juntas, com o mesmo `vigenteDe` — perguntar às duas seria
+     * perguntar duas vezes a mesma coisa.
+     */
+    async buscarVigenciaAgendada(usuarioId: string): Promise<Date | null> {
+        const ficha = await this.prismaClient.fichaAlimentacao.findFirst({
+            where: PlanRepository.agendadaEm(usuarioId, new Date()),
+            orderBy: { vigenteDe: "asc" },
+            select: { vigenteDe: true },
+        });
+
+        return ficha?.vigenteDe ?? null;
+    }
+
+    /**
+     * Só a meta de água da ficha vigente — devolve null se o usuário não existe
      * ou ainda não tem ficha.
      *
      * Existe separado de buscarPlanoAtivo porque a hidratação precisa de um
@@ -92,7 +176,8 @@ export default class PlanRepository {
      */
     async buscarMetaAgua(usuarioId: string): Promise<number | null> {
         const ficha = await this.prismaClient.fichaAlimentacao.findFirst({
-            where: { usuarioId, ativa: true },
+            where: PlanRepository.vigenteEm(usuarioId, new Date()),
+            orderBy: { vigenteDe: "desc" },
             select: { metaAguaMl: true },
         });
 
@@ -100,17 +185,22 @@ export default class PlanRepository {
     }
 
     /**
-     * A ficha de alimentação ativa, com metas e os ids das refeições — sem os
+     * A ficha de alimentação vigente, com metas e os ids das refeições — sem os
      * itens nem o catálogo.
      *
      * Serve a três coisas de uma vez no registro de refeição: as metas da
      * resposta, o total de refeições do dia e a CONFERÊNCIA DE POSSE do
      * refeicaoId. Sem essa conferência qualquer um marcaria refeição alheia e
      * somaria macros de outra pessoa no próprio dia.
+     *
+     * Por tabela, a conferência também recusa o id de uma refeição AGENDADA: a
+     * dieta de amanhã não é marcável hoje, e isso sai de graça do filtro de
+     * vigência.
      */
-    buscarFichaAlimentacaoAtiva(usuarioId: string) {
+    buscarFichaAlimentacaoVigente(usuarioId: string) {
         return this.prismaClient.fichaAlimentacao.findFirst({
-            where: { usuarioId, ativa: true },
+            where: PlanRepository.vigenteEm(usuarioId, new Date()),
+            orderBy: { vigenteDe: "desc" },
             select: {
                 caloriasAlvo: true,
                 proteinaG: true,
@@ -122,18 +212,22 @@ export default class PlanRepository {
     }
 
     /**
-     * Reescreve as metas da ficha de alimentação ativa com os números
-     * recalculados (RF34).
+     * Reescreve as metas de alimentação com os números recalculados (RF34).
+     *
+     * O alvo é a ficha AGENDADA quando existe uma, e só na falta dela a
+     * vigente. Havendo plano marcado para amanhã, mexer na meta de hoje seria
+     * mudar o denominador contra o qual o usuário já comeu — a mesma
+     * incoerência que a vigência foi criada para tirar da tela.
      *
      * Só as METAS mudam — as refeições prescritas continuam as mesmas. A ficha
      * não é regenerada aqui de propósito: trocar o cardápio inteiro porque o
      * usuário se pesou seria uma decisão dele (RF20), não um efeito colateral de
      * subir na balança. A resposta sinaliza a defasagem e o app oferece regerar.
      *
-     * Devolve `false` quando não havia ficha ativa, para quem chama distinguir
+     * Devolve `false` quando não havia ficha nenhuma, para quem chama distinguir
      * "atualizei" de "não havia o que atualizar".
      */
-    async atualizarMetasDaFichaAtiva(
+    async atualizarMetasDaProximaFicha(
         usuarioId: string,
         metas: {
             tmb: number;
@@ -145,15 +239,40 @@ export default class PlanRepository {
             metaAguaMl: number;
         },
     ): Promise<boolean> {
-        const { count } = await this.prismaClient.fichaAlimentacao.updateMany({
-            where: { usuarioId, ativa: true },
+        const agora = new Date();
+
+        // `update` por id, e não `updateMany` pelo filtro: com uma agendada e
+        // uma vigente ao mesmo tempo, o updateMany escreveria nas duas.
+        const alvo =
+            (await this.prismaClient.fichaAlimentacao.findFirst({
+                where: PlanRepository.agendadaEm(usuarioId, agora),
+                orderBy: { vigenteDe: "asc" },
+                select: { id: true },
+            })) ??
+            (await this.prismaClient.fichaAlimentacao.findFirst({
+                where: PlanRepository.vigenteEm(usuarioId, agora),
+                orderBy: { vigenteDe: "desc" },
+                select: { id: true },
+            }));
+
+        if (!alvo) return false;
+
+        await this.prismaClient.fichaAlimentacao.update({
+            where: { id: alvo.id },
             data: metas,
         });
 
-        return count > 0;
+        return true;
     }
 
     buscarPlanoAtivo(usuarioId: string) {
+        const agora = new Date();
+
+        // O filtro de vigência entra nos includes ANINHADOS, e por isso não
+        // reaproveita `vigenteEm`: ali dentro o usuarioId já é o da relação.
+        const emVigor = { ativa: true, vigenteDe: { lte: agora } } as const;
+        const maisRecente = { vigenteDe: "desc" } as const;
+
         return this.prismaClient.usuario.findUnique({
             where: { id: usuarioId },
             include: {
@@ -168,7 +287,8 @@ export default class PlanRepository {
                 cargas: { select: { exercicioId: true, pesoKg: true } },
 
                 fichasTreino: {
-                    where: { ativa: true },
+                    where: emVigor,
+                    orderBy: maisRecente,
                     take: 1,
                     include: {
                         sessoes: {
@@ -186,7 +306,8 @@ export default class PlanRepository {
                 },
 
                 fichasAlimentacao: {
-                    where: { ativa: true },
+                    where: emVigor,
+                    orderBy: maisRecente,
                     take: 1,
                     include: {
                         refeicoes: {

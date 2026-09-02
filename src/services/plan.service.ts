@@ -1,3 +1,4 @@
+import { inicioDoProximoDia, janelaDoDia } from "../config/fuso";
 import NaoEncontradoError from "../errors/nao-encontrado.error";
 import ValidationError from "../errors/validation.error";
 import ConferenciaMapper from "../mappers/conferencia.mapper";
@@ -6,6 +7,7 @@ import PlanoMapper from "../mappers/plano.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
+import RefeicaoRepository from "../repositories/refeicao.repository";
 import { PerfilOnboardingInput } from "../types/perfil.types";
 import { GeradorDePlano, MeuPlano, OnboardingRequest, OnboardingResponse } from "../types/plano.types";
 import EngineService from "./engine.service";
@@ -27,7 +29,8 @@ import EngineService from "./engine.service";
  *
  * `regenerar` (POST /api/plano/regenerar) é o caminho do RF20, e a diferença
  * para o `gerar` é que ali o usuário ainda não existe: aqui o perfil vem do
- * BANCO, e o plano é persistido na hora, sem passar por uma tela de aprovação.
+ * BANCO, e o plano é persistido na hora, sem passar por uma tela de aprovação —
+ * mas só ENTRA EM VIGOR amanhã quando o dia de hoje já tem refeição marcada.
  */
 export default class PlanService {
     private readonly engineService;
@@ -38,6 +41,7 @@ export default class PlanService {
     private readonly pesoRepository;
     private readonly perfilMapper;
     private readonly conferenciaMapper;
+    private readonly refeicaoRepository;
 
     constructor(
         engineService: EngineService,
@@ -48,6 +52,7 @@ export default class PlanService {
         pesoRepository: PesoRepository,
         perfilMapper: PerfilMapper,
         conferenciaMapper: ConferenciaMapper,
+        refeicaoRepository: RefeicaoRepository,
     ) {
         this.engineService = engineService;
         this.geradorDePlano = geradorDePlano;
@@ -57,6 +62,7 @@ export default class PlanService {
         this.pesoRepository = pesoRepository;
         this.perfilMapper = perfilMapper;
         this.conferenciaMapper = conferenciaMapper;
+        this.refeicaoRepository = refeicaoRepository;
     }
 
     async gerar(cadastro: OnboardingRequest): Promise<OnboardingResponse> {
@@ -98,6 +104,14 @@ export default class PlanService {
      * aprovação existe porque nada foi gravado ainda e desistir não deixa lixo;
      * aqui o usuário já tem plano, e um "gere, mas não guarde" só produziria uma
      * tela que ele teria de confirmar duas vezes.
+     *
+     * Persistido de imediato NÃO é o mesmo que vigente de imediato: se o dia já
+     * tem refeição marcada, a ficha nova nasce valendo a partir da próxima
+     * meia-noite. Trocar o cardápio no meio do dia deixava as calorias já
+     * comidas — que continuam contando, pelo FK com a ficha antiga — medidas
+     * contra uma meta nova, e todos os cards desmarcados, porque os
+     * `refeicaoId` registrados são os da prescrição anterior. Pior: remarcar o
+     * mesmo almoço na ficha nova somava duas vezes, já que o id mudou.
      */
     async regenerar(usuarioId: string): Promise<MeuPlano> {
         const perfilBanco = await this.pesoRepository.buscarPerfil(usuarioId);
@@ -118,16 +132,48 @@ export default class PlanService {
 
         console.log("[regenerar] conferência dos macros:", JSON.stringify(validacao, null, 2));
 
-        await this.planRepository.substituirFichas(
+        await this.planRepository.gravarFichas(
             usuarioId,
             this.planoMapper.montar(plano, resultado),
             resultado,
+            await this.decidirVigencia(usuarioId),
         );
 
         // Devolve o plano LIDO DO BANCO, e não o recém-montado: é o formato das
         // telas principais, com os ids que o app usa para marcar refeição e
         // abrir treino. Sem os ids, a tela abriria e nada seria clicável.
+        //
+        // Quando a vigência foi adiada, o que sai daqui é o plano DE HOJE, com
+        // `planoAgendado` preenchido — e é justamente esse par que a tela da
+        // dieta usa para explicar por que o cardápio não mudou.
         return this.consultar(usuarioId);
+    }
+
+    /**
+     * A partir de quando a ficha recém-gerada passa a valer.
+     *
+     * Regra: a próxima meia-noite local, EXCETO quando o dia ainda não tem
+     * nenhuma refeição marcada — aí não há conta a bagunçar, e esperar seria
+     * uma espera artificial para quem gera um plano às 7h da manhã.
+     *
+     * Só refeição decide o dia "sujo". Hidratação também tem meta na ficha de
+     * alimentação, mas a incoerência que a vigência conserta é a da conta de
+     * CALORIAS: a água registrada não deixa de valer nem muda de dono quando a
+     * meta muda, porque `RegistroHidratacao` não aponta para a ficha.
+     *
+     * O usuário sem ficha vigente (base migrada à mão, ou cadastro interrompido)
+     * também recebe o plano na hora: adiar deixaria o GET /api/plano em 404 até
+     * a meia-noite.
+     */
+    private async decidirVigencia(usuarioId: string): Promise<Date> {
+        const agora = new Date();
+
+        const [marcadasHoje, fichaVigente] = await Promise.all([
+            this.refeicaoRepository.contarNoPeriodo(usuarioId, janelaDoDia(agora)),
+            this.planRepository.buscarFichaAlimentacaoVigente(usuarioId),
+        ]);
+
+        return marcadasHoje === 0 || !fichaVigente ? agora : inicioDoProximoDia(agora);
     }
 
     async consultar(usuarioId: string): Promise<MeuPlano> {
@@ -144,6 +190,11 @@ export default class PlanService {
             throw new NaoEncontradoError("Usuário ainda não tem um plano ativo");
         }
 
-        return this.meuPlanoMapper.montar(usuario, fichaTreino, fichaAlimentacao);
+        return this.meuPlanoMapper.montar(
+            usuario,
+            fichaTreino,
+            fichaAlimentacao,
+            await this.planRepository.buscarVigenciaAgendada(usuarioId),
+        );
     }
 }

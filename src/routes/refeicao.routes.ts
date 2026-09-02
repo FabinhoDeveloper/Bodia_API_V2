@@ -10,7 +10,7 @@ import RefeicaoService from "../services/refeicao.service";
 
 const router = Router();
 
-// O PlanRepository entra pela ficha ativa: metas, total de refeições e a
+// O PlanRepository entra pela ficha vigente: metas, total de refeições e a
 // conferência de que o refeicaoId é mesmo deste usuário.
 const refeicaoController = new RefeicaoController(
     new RefeicaoService(new RefeicaoRepository(prismaClient), new PlanRepository(prismaClient, new FichaMapper())),

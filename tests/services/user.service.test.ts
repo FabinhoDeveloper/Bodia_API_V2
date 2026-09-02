@@ -160,7 +160,7 @@ function pesoRepositoryFake(perfil: unknown = perfilNoBanco()) {
 
 function planRepositoryFake(temFicha = true) {
     return {
-        atualizarMetasDaFichaAtiva: jest.fn().mockResolvedValue(temFicha),
+        atualizarMetasDaProximaFicha: jest.fn().mockResolvedValue(temFicha),
     } as unknown as { [K in keyof PlanRepository]: jest.Mock };
 }
 
@@ -330,7 +330,7 @@ describe("UserService", () => {
 
             const resumo = await service.registrarPeso("u1", 58);
 
-            expect(planRepository.atualizarMetasDaFichaAtiva).toHaveBeenCalledWith(
+            expect(planRepository.atualizarMetasDaProximaFicha).toHaveBeenCalledWith(
                 "u1",
                 resumo.metas,
             );
@@ -393,7 +393,7 @@ describe("UserService", () => {
 
             expect(resumo.metas?.tmb).toBeGreaterThan(0);
             expect(pesoRepository.criar).not.toHaveBeenCalled();
-            expect(planRepository.atualizarMetasDaFichaAtiva).not.toHaveBeenCalled();
+            expect(planRepository.atualizarMetasDaProximaFicha).not.toHaveBeenCalled();
         });
 
         it("devolve metas nulas quando não há peso registrado", async () => {
@@ -444,7 +444,7 @@ describe("UserService", () => {
 
             expect(resultado.recalculado).toBe(true);
             expect(resultado.metas?.caloriasAlvo).toBeGreaterThan(0);
-            expect(planRepository.atualizarMetasDaFichaAtiva).toHaveBeenCalled();
+            expect(planRepository.atualizarMetasDaProximaFicha).toHaveBeenCalled();
         });
 
         // FA02: anunciar "metas atualizadas" quando nada mudou treinaria o
@@ -459,7 +459,7 @@ describe("UserService", () => {
 
             expect(resultado.recalculado).toBe(false);
             expect(resultado.metas).toBeNull();
-            expect(planRepository.atualizarMetasDaFichaAtiva).not.toHaveBeenCalled();
+            expect(planRepository.atualizarMetasDaProximaFicha).not.toHaveBeenCalled();
         });
 
         // Lista vazia é "apaguei todas"; ausente é "não mexi". Tratá-las igual

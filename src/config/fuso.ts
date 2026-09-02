@@ -69,6 +69,18 @@ export function janelaDoDia(instante: Date): Periodo {
 }
 
 /**
+ * O instante UTC da próxima meia-noite LOCAL — quando o dia do usuário vira.
+ *
+ * É o `ate` da janela do dia, que já é exclusivo: o primeiro instante que
+ * pertence ao dia seguinte. Existe com nome próprio porque é a data em que uma
+ * ficha regenerada entra em vigor (`PlanService.regenerar`), e ali "janela do
+ * dia . ate" não diria o que a linha quer dizer.
+ */
+export function inicioDoProximoDia(instante: Date): Date {
+    return janelaDoDia(instante).ate;
+}
+
+/**
  * O intervalo UTC da SEMANA local em que `instante` cai, de segunda a domingo.
  *
  * Existe porque o treino é prescrito por semana: a `TreinoScreen` mostra um card

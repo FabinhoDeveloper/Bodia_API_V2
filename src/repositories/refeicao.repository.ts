@@ -59,6 +59,26 @@ export default class RefeicaoRepository {
         });
     }
 
+    /**
+     * Quantas refeições o usuário marcou dentro da janela.
+     *
+     * Serve à decisão de vigência da regeneração (`PlanService.regenerar`): um
+     * dia sem nenhuma marcação não tem conta a bagunçar, e o plano novo pode
+     * valer na hora em vez de esperar a meia-noite.
+     *
+     * Um `count` e não um `listarPorPeriodo().length` porque a pergunta é
+     * "tem alguma?" — carregar os registros e o JOIN da prescrição para chegar
+     * a um número seria trabalho jogado fora.
+     */
+    contarNoPeriodo(usuarioId: string, periodo: Periodo): Promise<number> {
+        return this.prismaClient.registroRefeicao.count({
+            where: {
+                usuarioId,
+                registradoEm: { gte: periodo.de, lt: periodo.ate },
+            },
+        });
+    }
+
     /** A marcação desta refeição dentro da janela, se já existir. */
     buscarNoDia(
         usuarioId: string,
