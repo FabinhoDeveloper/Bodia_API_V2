@@ -8,10 +8,10 @@ import CatalogoFilter from "../prompts/catalogo.filter";
 import AiService from "../services/ai.service";
 import DietaIaGenerator from "../generators/dieta-ia.generator";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
+import PorcoesSolver from "../generators/porcoes.solver";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
 import ValidadorVolume from "../generators/validador-volume";
-import DietaQuantidadesPrompt from "../prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../prompts/treino.prompt";
 
@@ -30,7 +30,7 @@ const benchmarkController = new BenchmarkController(
         new EngineService(),
         new PlanoIaGenerator(
             new CatalogoFilter(),
-            new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
+            new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
             new TreinoIaGenerator(new TreinoPrompt(), aiService),
             new ValidadorMacros(),
             new ValidadorVolume(),

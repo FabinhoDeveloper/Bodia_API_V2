@@ -14,7 +14,7 @@ export interface TreinoGerado {
  * CHAMADA 3: o treino, sozinho.
  *
  * Não depende da dieta, então o PlanoIaGenerator dispara os dois em paralelo —
- * é o que impede que dividir a geração em três chamadas saia mais lento do que
+ * é o que impede que dividir a geração em chamadas separadas saia mais lento do que
  * a chamada única que existia antes.
  */
 export default class TreinoIaGenerator {

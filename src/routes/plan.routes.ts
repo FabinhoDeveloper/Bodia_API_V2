@@ -5,6 +5,7 @@ import prismaClient from "../config/prisma";
 import PlanController from "../controllers/plan.controller";
 import DietaIaGenerator from "../generators/dieta-ia.generator";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
+import PorcoesSolver from "../generators/porcoes.solver";
 import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
@@ -15,7 +16,6 @@ import MeuPlanoMapper from "../mappers/meu-plano.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import PlanoMapper from "../mappers/plano.mapper";
 import CatalogoFilter from "../prompts/catalogo.filter";
-import DietaQuantidadesPrompt from "../prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../prompts/treino.prompt";
 import autenticacao from "../middlewares/autenticacao";
@@ -30,16 +30,17 @@ import { GeradorDePlano } from "../types/plano.types";
 const router = Router();
 
 // A flag decide quem monta o plano; com SIMULAR_IA=false entra o caminho real,
-// que hoje são TRÊS chamadas à IA (seleção de alimentos, quantidades e treino)
-// em vez da chamada única que tentava fazer tudo de uma vez.
+// que hoje são DUAS chamadas à IA (seleção de alimentos e treino) em vez da
+// chamada única que tentava fazer tudo de uma vez. As gramas não são pedidas ao
+// modelo: quem as resolve é o PorcoesSolver.
 function montarGeradorIa(): PlanoIaGenerator {
-    // Um AiService só, compartilhado pelas três chamadas: mesmo cliente, mesmo
+    // Um AiService só, compartilhado pelas duas chamadas: mesmo cliente, mesmo
     // modelo, mesmos parâmetros. Duas instâncias poderiam divergir sem aviso.
     const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs, iaParametros);
 
     return new PlanoIaGenerator(
         new CatalogoFilter(),
-        new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
+        new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
         new ValidadorMacros(),
         new ValidadorVolume(),

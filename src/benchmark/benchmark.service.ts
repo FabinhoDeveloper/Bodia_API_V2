@@ -13,7 +13,7 @@ export interface RespostaBenchmark {
         llm_ms: number;
     };
     /**
-     * Tempo de cada trilha (dieta = seleção + quantidades; treino). Elas correm
+     * Tempo de cada trilha (dieta = seleção; treino). Elas correm
      * em paralelo, como em produção, então a soma delas é maior que
      * `tempo.total_ms` — é `total_ms` que diz se cabe no orçamento do app, e as
      * etapas que dizem qual trilha domina.
@@ -56,7 +56,7 @@ const PERFIL_FICTICIO: PerfilOnboardingInput = {
  * do payload de /api/onboarding, e chama PlanoIaGenerator.gerarComMetricas em
  * vez de gerar() — método que existe só para isto.
  *
- * CONTAGEM DE TOKENS não vem na resposta. Com três chamadas ao modelo não
+ * CONTAGEM DE TOKENS não vem na resposta. Com duas chamadas ao modelo não
  * existe mais um `usage` único, e bombear o de cada uma até aqui obrigaria os
  * geradores de produção a carregar métrica de um endpoint temporário. Os
  * tokens de cada etapa saem no console, nos logs `[ia:<etapa>]` — que é onde se

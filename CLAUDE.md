@@ -86,7 +86,7 @@ Só classe que é **ponto de entrada de um domínio**. O resto é colaborador e 
 | Pasta | O que é | Exemplos |
 |---|---|---|
 | `mappers/` | tradução entre formato interno e contrato da API | `plano.mapper.ts` (escrita), `meu-plano.mapper.ts` (leitura), `perfil.mapper.ts` (string → enum) |
-| `prompts/` | construção dos prompts e o filtro que os alimenta | `dieta-selecao.prompt.ts`, `dieta-quantidades.prompt.ts`, `treino.prompt.ts`, `catalogo.filter.ts` |
+| `prompts/` | construção dos prompts e o filtro que os alimenta | `dieta-selecao.prompt.ts`, `treino.prompt.ts`, `catalogo.filter.ts` |
 | `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts` (orquestra), `dieta-ia.generator.ts`, `treino-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts`, `validador-volume.ts` |
 | `benchmark/` | endpoint temporário, service + controller + rota juntos | `benchmark.*.ts` |
 
@@ -216,6 +216,7 @@ backend/
       plano-simulado.generator.ts
       validador-macros.ts     # confere kcal/macros contra a TACO
       validador-volume.ts     # confere séries por grupo contra o orçamento
+      porcoes.solver.ts       # as gramas de cada refeição, sem IA
     mappers/
       plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
       meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
@@ -224,7 +225,6 @@ backend/
       conferencia.mapper.ts   # validadores -> o que a tela de revisão mostra
     prompts/
       dieta-selecao.prompt.ts      # chamada 1: quais alimentos, sem gramas
-      dieta-quantidades.prompt.ts  # chamada 2: gramas dos já escolhidos
       treino.prompt.ts             # chamada 3: o treino
       padrao-refeicoes.ts          # como é cada refeição no Brasil (dado)
       prompt.types.ts              # o par { system, user }
@@ -249,6 +249,7 @@ backend/
       exercicios.ts           # catálogo escrito à mão
       volume-treino.ts        # limites e política de volume (primário/secundário)
       limites-seguranca.ts    # pisos e tetos dos cálculos (RF17)
+      porcoes.ts              # papel e faixa de porção de cada alimento
       hidratacao.ts           # ml por kg por nível de atividade
       descanso-treino.ts      # intervalo de descanso por exercício
       plano-simulado.ts       # fixture usado quando SIMULAR_IA=true
@@ -405,34 +406,53 @@ Os nomes precisam continuar batendo com `HORARIO_POR_REFEICAO` (`mappers/plano.m
 
 ## Geração do plano pela IA
 
-O `POST /api/onboarding` faz **três chamadas** ao modelo, não uma:
+O `POST /api/onboarding` faz **duas chamadas** ao modelo, não uma:
 
 ```
-                      ┌─ dieta:seleção ──▶ dieta:quantidades ─┐
-engine.service ─▶ catalogo.filter ─┤                                       ├─▶ validador-macros
-  os números       filtra restrições└─ treino ──────────────────────────────┘     confere as contas
+                                   ┌─ dieta:seleção ─▶ porcoes.solver ─┐
+engine.service ─▶ catalogo.filter ─┤    (IA: quais)     (motor: quanto)  ├─▶ validador-macros
+  os números       filtra restrições└─ treino ─────────────────────────┘     confere as contas
                                         (em paralelo com a dieta)
 ```
 
 Quem encadeia é `plano-ia.generator.ts`; quem o chama é `plan.service.gerar()`.
 
-### Por que três chamadas, e não uma
+### Por que duas chamadas, e não uma
 
 A versão anterior pedia ao modelo, na mesma resposta, escolher alimentos, dosar gramas até fechar quatro macros e montar o treino. Levava 2–3 min, falhava com frequência e produzia café da manhã com filé de merluza. O comentário de `reasoning_effort` que existia no `ai.service` já dizia onde estava o problema: *"a dificuldade aritmética da tarefa (encaixar gramas de centenas de alimentos até fechar 4 macros ao mesmo tempo)"*.
 
 Cada chamada agora faz uma coisa só:
 
-| Etapa | Faz | Prompt |
+| Etapa | Faz | Onde |
 |---|---|---|
-| `dieta:seleção` | escolhe **quais** alimentos entram em cada refeição, por id. Proibida de informar gramas. | ~17k caracteres (leva a TACO filtrada) |
-| `dieta:quantidades` | dosa em gramas **só os alimentos escolhidos** na etapa anterior | ~3,8k caracteres |
-| `treino` | monta o treino. Não conhece a dieta. | ~7,8k caracteres |
+| `dieta:seleção` | escolhe **quais** alimentos entram em cada refeição, por id. Proibida de informar gramas. | IA, ~17k caracteres (leva a TACO filtrada) |
+| porções | dosa em gramas **só os alimentos escolhidos** na etapa anterior | `porcoes.solver.ts`, sem IA |
+| `treino` | monta o treino. Não conhece a dieta. | IA, ~7,8k caracteres |
 
-**O ganho não é prompt menor no total** — a soma é parecida com a de antes, porque a seleção ainda carrega o catálogo inteiro. O ganho é que a etapa **difícil** encolheu: a aritmética que estourava o raciocínio agora acontece sobre 3 a 5 alimentos por refeição em vez dos 284 do catálogo.
+**O ganho não é prompt menor no total** — a soma é parecida com a de antes, porque a seleção ainda carrega o catálogo inteiro. O ganho é que a etapa **difícil** saiu do modelo: a aritmética que estourava o raciocínio virou código.
 
-Se a latência ainda incomodar, é a chamada 1 que precisa encolher — e o caminho é classificar a TACO por refeição e filtrar por código, como o `catalogo.filter` já faz com as restrições.
+Se a latência ainda incomodar, é a chamada de seleção que precisa encolher — e o caminho é classificar a TACO por refeição e filtrar por código, como o `catalogo.filter` já faz com as restrições.
 
-**Dieta e treino rodam em `Promise.all`.** São independentes, e sem isso a divisão sairia mais lenta que a chamada única: o total seria a soma das três em vez de `max(dieta₁+dieta₂, treino)`.
+**Dieta e treino rodam em `Promise.all`.** São independentes, e sem isso a divisão sairia mais lenta que a chamada única.
+
+### As gramas saem do motor, não do modelo
+
+A etapa de porções **já foi uma terceira chamada à IA**, e produziu o pior defeito que o app teve: um almoço com **400 g de arroz** e um jantar com 500 g, 2,9 kg de comida no dia, o total 30% acima da própria meta calórica e a proteína 72% acima. O modelo recebia as quatro metas da refeição e devolvia as gramas; a única conferência era `gramas > 0`, e o prompt trazia um PISO ("uma porção de arroz é 100-200 g, não 37 g") e nenhum teto.
+
+Dosar porções sob restrição é aritmética, e é justamente o que a fundamentação do trabalho diz que LLM não faz bem. Hoje quem resolve é o `porcoes.solver.ts`:
+
+- **`data/porcoes.ts`** dá a cada alimento um **papel** (`BASE_CARBO`, `PROTEINA`, `GORDURA`, `LATICINIO`, `VEGETAL`, `FRUTA`) e uma **faixa** `[min, usual, max]`. O papel sai da CATEGORIA da TACO, que diz bem o que o alimento é; a faixa sai da DENSIDADE ENERGÉTICA, que diz bem quanto se come — ninguém come 200 g de azeite nem 20 g de alface. Categoria para os dois não funcionaria: "Cereais e derivados" tem arroz cozido (128 kcal, 150 g) e farinha de trigo (360 kcal, 25 g) lado a lado.
+- **O solver** faz descida coordenada sobre um custo: a soma dos desvios relativos ao quadrado dos quatro alvos, ponderada. Cada rodada calcula, para cada alimento, a grama que minimiza o custo com os outros parados (fórmula fechada — o custo é quadrático numa variável só) e aplica a de maior ganho, presa à faixa.
+- A **grade de servir** (5 g, 10 g, ou 1 g no que cabe todo em 30 g) entra DENTRO da busca. Arredondar depois é cego ao custo: 5 g de azeite são 44 kcal e 18% da meta de gordura de um almoço.
+
+A primeira versão fechava um macro por vez, em sequência, e estava errada: um alvo inalcançável empurrava sua alavanca ao teto e destruía os outros. Num almoço sem fonte de gordura, perseguir 28 g de gordura levava o frango a 250 g e a proteína a +51%. Com custo global, um alvo impossível simplesmente para de render melhora.
+
+**Infeasibilidade é resultado, não erro.** Se a meta não couber nas faixas, o solver entrega o melhor prato possível e o `validador-macros` reporta a diferença. Prato comestível com desvio honesto vale mais que um prato que fecha a planilha e ninguém come.
+
+Duas consequências no resto do código:
+
+- O `dieta-selecao.prompt` passou a **exigir uma fonte de gordura** nas refeições principais. Com a gordura travada em 25% das calorias e nenhum alimento denso no prato, só sobrava volume para fechar a energia — foi metade do problema das 400 g.
+- `DietaIaGenerator.exigirCobertura` **recusa** almoço ou jantar sem base de carboidrato ou sem fonte de proteína: a meta seria inalcançável por construção, e o problema é da SELEÇÃO, que precisa ser refeita.
 
 `plan.service.gerar()` orquestra tudo e imprime três blocos no console: o plano calculado, a conferência dos macros e o plano enviado ao app. O plano volta na resposta HTTP e **só é persistido quando o usuário aprova**, num segundo POST (`/api/cadastro`, `user.service`).
 
@@ -473,7 +493,9 @@ Cada um dos três prompts aplica as mesmas técnicas, com o conteúdo que lhe di
 2. **Context injection**: valores do `engine.service` + o catálogo pertinente àquela etapa.
 3. **Few-shot**: exemplo do JSON de saída, com a palavra "json" — requisito do JSON mode.
 
-**As citações da literatura ficam no prompt a que pertencem**, não repetidas nas três: Pelland 2024 e Schoenfeld 2016 (volume) só no `treino.prompt`; ISSN/Jäger, Stokes, Kerksick e Mifflin (macros) só no `dieta-quantidades.prompt`. Elas existem para reduzir a tentativa do modelo de "melhorar" o número recebido — a alucinação de fidelidade de Zhang et al. (2024) —, e isso só faz sentido onde o número está. Há teste garantindo que não vazem entre prompts.
+**As citações da literatura ficam no prompt a que pertencem**, não repetidas em todos: Pelland 2024 e Schoenfeld 2016 (volume) só no `treino.prompt`. Elas existem para reduzir a tentativa do modelo de "melhorar" o número recebido — a alucinação de fidelidade de Zhang et al. (2024) —, e isso só faz sentido onde o número está. Há teste garantindo que não vazem entre prompts.
+
+As de macros (ISSN/Jäger, Stokes, Kerksick, Mifflin) viviam no `dieta-quantidades.prompt` e saíram junto com ele: o modelo não recebe mais meta numérica de macro nenhuma, então não sobrou número para ele tentar melhorar. Elas continuam citadas onde o número de fato nasce — `engine.service` e `data/limites-seguranca.ts`.
 
 `treino.prompt.ts` tem limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
 
@@ -490,9 +512,9 @@ As chaves precisam continuar batendo com `DISTRIBUICAO_REFEICOES` (`engine.servi
 A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 
 1. **IDs na seleção**: todo `alimentoId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
-2. **IDs nas quantidades**: os ids precisam estar **na seleção da chamada 1**, não no catálogo inteiro. É uma conferência bem mais apertada, e saiu de graça com a divisão.
+2. **Cobertura da refeição**: almoço e jantar precisam de uma base de carboidrato e de uma fonte de proteína. Sem elas a meta é inalcançável por construção.
 3. **Nome do catálogo**: o `nome` gravado vem do catálogo, não do que a IA escreveu — o app nunca exibe um nome que não corresponde ao id.
-4. **Gramas**: precisam ser número finito e positivo.
+4. **Gramas**: não são mais validadas porque não são mais pedidas ao modelo. O `porcoes.solver` só devolve ids que recebeu, sempre dentro da faixa de `data/porcoes.ts`.
 5. **IDs do treino**: mesma regra do catálogo filtrado.
 6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
 7. **Volume de treino**: `validador-volume` soma as séries por grupo a partir dos exercícios escolhidos e compara com o orçamento do motor, tolerando uma série de diferença (arredondamento legítimo). Também acusa grupo treinado fora do orçamento. Era o irmão que faltava — a dieta tinha os números conferidos e o treino não tinha nada.
@@ -505,7 +527,7 @@ Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta 
 
 `gerarJson(system, user, etapa)` usa `response_format: json_object` e temperatura baixa (a fundamentação 4.2.3 trata a estocasticidade como problema de reprodutibilidade).
 
-O parâmetro **`etapa`** não é enfeite: com três chamadas, sem ele o console imprime blocos idênticos e não dá para saber qual etapa está lenta ou falhou. Os logs saem como `[ia:dieta:seleção]`, `[ia:dieta:quantidades]`, `[ia:treino]`, com tempo e tokens de cada uma.
+O parâmetro **`etapa`** não é enfeite: com mais de uma chamada, sem ele o console imprime blocos idênticos e não dá para saber qual etapa está lenta ou falhou. Os logs saem como `[ia:dieta:seleção]` e `[ia:treino]`, com tempo e tokens de cada uma.
 
 `max_tokens: 8192` — o teto anterior era 32000 por causa dos `reasoning_tokens` da DeepSeek, que contavam dentro do limite. Cada chamada agora produz uma resposta pequena. (Num modelo de raciocínio o problema volta, e por isso o teto dele é maior — ver a tabela abaixo.)
 
@@ -665,8 +687,9 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 
 ## Próximos passos
 
-- **O desvio dos macros está fora da tolerância, e isso é medido.** Numa geração real com `gpt-4o-mini` a proteína veio **+63,6%** acima da meta (`gpt-5`: +74,7%). Os dois validadores acusam, o desvio chega ao app (RF22) e o plano é entregue assim mesmo — corrigir é o **retry automático** abaixo. O suspeito é o prompt de quantidades: ele recebe as metas da refeição, mas nada o impede de arredondar cada porção para cima.
-- **Retry automático** quando `dentroDoLimite` for `false`: reenviar ao modelo com o desvio medido realimentado no prompt. Hoje a etapa só MEDE. É a evolução prevista em A5 do `Alinhamento_Documento_BodIA.md`.
+- **O carboidrato ainda fica abaixo da meta, e a causa é o motor, não a IA.** Numa geração real com `gpt-5` depois do solver, a proteína ficou em **+0,8%** e a caloria em **−5,9%** (eram +72% e +30%), mas o carboidrato veio **−13,8%**: com o arroz e o feijão já nos tetos de 250 g, os 398 g/dia do perfil medido não cabem em porções de comer. O carboidrato é o RESÍDUO das calorias depois de proteína e de uma gordura travada em `GORDURA_PERCENTUAL_KCAL = 0.25`, então subir a gordura para 30–35% (dentro da faixa 20–35% de Jäger et al. 2017) derrubaria o carboidrato de 398 para 362–326 g e tornaria a meta alcançável. É decisão de nutrição, não de código, e foi deixada em aberto de propósito.
+- **A concentração de 35% no almoço** (`DISTRIBUICAO_REFEICOES`) é o outro lado da mesma conta: 1014 kcal e 139 g de carboidrato numa refeição exigem um carboidrato denso no prato (farofa, pão, macarrão). Quando a seleção traz um, o solver fecha os quatro alvos dentro de 1%; quando não traz, para nos tetos.
+- **O fixture não passa pelo solver.** `SIMULAR_IA=true` devolve `data/plano-simulado.ts` com gramas fixas e quatro refeições, independentemente do perfil — limitação já documentada no próprio arquivo, mas que agora significa que o caminho padrão de desenvolvimento não exercita as porções.
 - **A escolha do modelo decide o RNF02** (geração em até 15 s). Medido em `scripts/bench-modelo.ts`, mesmo perfil, mesmos prompts:
 
   | modelo | wall clock | RNF02 |
@@ -688,6 +711,6 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 npm run test:cobertura
 ```
 
-Mede só o núcleo determinístico — `engine.service` e as tabelas de política em `data/`. Última medição: **97,2% de statements, 91,8% de branches**, com o `engine.service` sozinho em 96,0%. O requisito pede 80%.
+Mede só o núcleo determinístico — `engine.service`, o `porcoes.solver` e as tabelas de política em `data/`. Última medição: **97,0% de statements, 90,0% de branches**, com o `engine.service` em 96,3% e o `porcoes.solver` em 95,5%. O requisito pede 80%.
 
-O recorte é proposital: o RNF28 fala do MOTOR DETERMINÍSTICO, e diluir a medição no resto do código (controllers, rotas, mappers) daria um número que não responde ao requisito.
+O recorte é proposital: o RNF28 fala do MOTOR DETERMINÍSTICO, e diluir a medição no resto do código (controllers, rotas, mappers) daria um número que não responde ao requisito. O solver entrou no recorte quando as gramas deixaram de ser resposta do LLM e viraram cálculo — é motor tanto quanto o resto.

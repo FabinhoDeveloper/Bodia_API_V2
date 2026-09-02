@@ -18,7 +18,7 @@ import OpenAI from "openai";
 let client: OpenAI | null = null;
 
 /**
- * Modelo usado nas três chamadas.
+ * Modelo usado nas duas chamadas.
  *
  * Fica no topo do arquivo, e não junto das outras exportações, porque o teto de
  * tempo e os parâmetros da chamada são DERIVADOS dele — precisa estar
@@ -39,15 +39,18 @@ export function ehModeloDeRaciocinio(model: string): boolean {
 }
 
 /**
- * Teto POR CHAMADA, não do conjunto — a geração são três chamadas curtas
- * (seleção de alimentos, quantidades e treino).
+ * Teto POR CHAMADA, não do conjunto — a geração são DUAS chamadas curtas
+ * (seleção de alimentos e treino), que correm em paralelo.
  *
- * Quem manda no orçamento é a trilha da dieta: seleção e quantidades rodam em
- * SEQUÊNCIA (a segunda recebe o que a primeira escolheu), enquanto o treino
- * corre em paralelo e se esconde atrás delas. Então o pior caso é 2 × o teto:
+ * Já foram três: a etapa de quantidades também era uma chamada, em sequência
+ * depois da seleção, e o pior caso valia 2 × o teto. Ela virou o
+ * `PorcoesSolver`, determinístico, e o orçamento hoje é uma chamada só:
  *
- *   chat (60s)      → 120s
- *   raciocínio (90s) → 180s
+ *   chat (60s)       → 60s
+ *   raciocínio (90s) → 90s
+ *
+ * A folga sobre os 210s do axios no app ficou grande, e é de propósito: o teto
+ * por chamada continua sendo o que protege contra um modelo que trava.
  *
  * Os dois cabem nos 210s de timeout do axios no app, que é o número que
  * importa: o backend precisa falhar ANTES, senão o app desiste sozinho e o
@@ -82,9 +85,10 @@ export const iaTimeoutMs = ehModeloDeRaciocinio(iaModel) ? 90000 : 60000;
  * usar essa família — é escolha consciente, não detalhe de configuração.
  *
  * `reasoning_effort: "minimal"` é o modo mais rápido do gpt-5, e não `"low"`:
- * as três etapas produzem JSON de estrutura fixa, onde raciocínio longo gasta
- * tempo e tokens sem melhorar o resultado. Foi com esforço maior que a etapa de
- * quantidades estourou o teto de 60s.
+ * as duas etapas produzem JSON de estrutura fixa, onde raciocínio longo gasta
+ * tempo e tokens sem melhorar o resultado. Foi com esforço maior que a antiga
+ * etapa de quantidades estourou o teto de 60s — ela não existe mais, mas a
+ * lição vale para as que ficaram.
  *
  * O teto de saída é maior no raciocínio porque os reasoning_tokens contam
  * DENTRO dele — mesmo motivo que obrigava a 32000 na época da DeepSeek. Com
@@ -140,7 +144,7 @@ export function getIaClient(): OpenAI {
 /**
  * Quando true, a rota usa o PlanoSimuladoGenerator em vez de chamar a IA.
  *
- * Continua ligada por padrão: mesmo com a geração dividida em três chamadas,
+ * Continua ligada por padrão: mesmo com a geração reduzida a duas chamadas,
  * desenvolver o resto do produto sem depender de rede e de crédito é o que
  * torna a suíte e o dia a dia rápidos. Desligue com SIMULAR_IA=false para
  * exercitar o caminho real.

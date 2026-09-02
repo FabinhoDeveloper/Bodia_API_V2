@@ -6,7 +6,7 @@
 import { PlanoGerado, Validacao } from "./plano.types";
 
 export interface EtapaBenchmark {
-    /** "dieta" (seleção + quantidades) ou "treino". */
+    /** "dieta" (seleção; as porções são determinísticas) ou "treino". */
     nome: string;
     ms: number;
     sucesso: boolean;
@@ -30,7 +30,7 @@ export interface ResultadoBenchmarkGeracao {
     /**
      * Tempo de cada trilha. Elas se sobrepõem no relógio, então a soma das
      * etapas é MAIOR que `llmMs` — o que cada uma responde é "onde o tempo é
-     * gasto", pergunta que motivou dividir a geração em três chamadas.
+     * gasto", pergunta que motivou dividir a geração em chamadas separadas.
      *
      * Ordem fixa (dieta, treino), não ordem de término. Em falha, `ms` é o tempo
      * até o erro daquela trilha.

@@ -11,23 +11,28 @@ import ValidadorVolume from "./validador-volume";
  * Orquestra a geração do plano pela IA (chamado pelo PlanService, depois que o
  * EngineService já produziu o ResultadoCalculo).
  *
- * São TRÊS chamadas ao modelo, não uma:
+ * São DUAS chamadas ao modelo, não uma:
  *
- *   dieta:seleção ──▶ dieta:quantidades     (DietaIaGenerator, em sequência)
- *   treino                                  (TreinoIaGenerator, independente)
+ *   dieta:seleção   (DietaIaGenerator — as gramas saem do PorcoesSolver, sem IA)
+ *   treino          (TreinoIaGenerator, independente)
  *
- * As duas trilhas rodam em PARALELO. Sem isso, dividir a geração sairia mais
- * lento que a chamada única que existia antes: o total seria a soma das três em
- * vez de max(dieta₁+dieta₂, treino).
+ * As duas trilhas rodam em PARALELO, então o tempo é max(dieta, treino) e não a
+ * soma.
  *
  * A divisão existe porque a chamada única pedia ao modelo escolher alimentos,
  * dosar gramas até fechar 4 macros e montar o treino ao mesmo tempo — e ele
  * gastava minutos raciocinando para entregar café da manhã com filé de merluza.
  * Cada chamada agora faz uma coisa só.
  *
+ * Já foram TRÊS: dosar as porções era uma chamada em sequência depois da
+ * seleção. Ela saiu porque o modelo errava a aritmética — um almoço com 400 g de
+ * arroz, o dia 30% acima da própria meta calórica — e porque dosar sob restrição
+ * é trabalho de motor, não de redator. Ver `porcoes.solver.ts`.
+ *
  * A conferência final NÃO mudou: validadorMacros recalcula kcal e macros a
  * partir da TACO e mede o desvio contra a meta do EngineService. O número da IA
- * continua nunca sendo aceito na palavra dela.
+ * continua nunca sendo aceito na palavra dela — e as gramas nem são mais pedidas
+ * a ela.
  */
 export default class PlanoIaGenerator {
     private readonly catalogoFilter;

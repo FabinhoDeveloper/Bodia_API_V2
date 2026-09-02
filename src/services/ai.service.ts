@@ -83,7 +83,7 @@ export default class AiService {
      * auditáveis.
      *
      * `etapa` identifica qual das chamadas está em curso ("dieta:seleção",
-     * "dieta:quantidades", "treino"). Sem ela o console mostra blocos idênticos
+     * "treino"). Sem ela o console mostra blocos idênticos
      * e não dá para saber qual etapa está lenta ou falhou — que é justamente a
      * pergunta que motivou dividir a geração em três.
      */

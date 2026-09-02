@@ -1,43 +1,61 @@
 import { Alimento } from "../data/alimentos";
-import DietaQuantidadesPrompt, {
-    RefeicaoSelecionada,
-} from "../prompts/dieta-quantidades.prompt";
+import { PAPEIS_PROTEICOS, papelDe } from "../data/porcoes";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import AiService from "../services/ai.service";
 import { ResultadoCalculo } from "../types/perfil.types";
 import { Refeicao, SelecaoDieta } from "../types/plano.types";
+import PorcoesSolver from "./porcoes.solver";
+
+/** Uma refeição já com os alimentos escolhidos na chamada 1. */
+interface RefeicaoSelecionada {
+    nome: string;
+    alimentos: Alimento[];
+}
 
 /**
- * As duas chamadas da dieta, em sequência:
+ * As refeições em que a meta é grande demais para fechar sem uma base de
+ * carboidrato e uma fonte de proteína. Lanche e ceia não entram: são pequenos e
+ * uma fruta com iogurte já os resolve.
  *
- *   1. SELEÇÃO   — quais alimentos entram em cada refeição (sem gramas);
- *   2. QUANTIDADES — quantas gramas de cada um dos escolhidos.
+ * Os nomes vêm de DISTRIBUICAO_REFEICOES, no engine.service.
+ */
+const REFEICOES_PRINCIPAIS = ["Almoço", "Jantar"];
+
+/**
+ * As duas etapas da dieta, em sequência:
  *
- * A ordem importa e não pode ser paralelizada: a chamada 2 recebe como entrada
- * exatamente o que a 1 escolheu. É a divisão que reduz o espaço de busca de 284
- * alimentos para os 3 a 5 de cada refeição — o motivo de existir, registrado no
- * comentário de `iaTimeoutMs` em config/ia.ts.
+ *   1. SELEÇÃO   — quais alimentos entram em cada refeição (chamada à IA);
+ *   2. PORÇÕES   — quantas gramas de cada um (determinístico, sem IA).
  *
- * Por serem sequenciais, são estas duas que mandam no orçamento de tempo: o
- * treino corre em paralelo com a trilha inteira e se esconde atrás dela. É por
- * isso que o teto por chamada é metade do que o app aguenta esperar.
+ * A etapa 2 JÁ FOI uma chamada à IA, e foi por isso que um almoço saiu com 400 g
+ * de arroz e um jantar com 500 g: o modelo recebia as quatro metas da refeição,
+ * devolvia as gramas, e a única conferência era `gramas > 0`. Medido contra a
+ * própria meta, o dia vinha 30% acima na caloria e 72% acima na proteína.
+ * Dosar porções sob restrição é aritmética, não redação — o `PorcoesSolver`
+ * resolve, dentro das faixas de `data/porcoes.ts`, e o resultado é o mesmo toda
+ * vez.
+ *
+ * Sobra para o LLM o que ele faz bem: escolher itens plausíveis para uma
+ * refeição brasileira. É a mesma divisão de trabalho que a fundamentação do
+ * projeto defende entre o motor determinístico e o modelo — ela só não estava
+ * sendo aplicada aqui.
  *
  * Cada etapa é validada antes de alimentar a seguinte: um erro na seleção vira
- * uma exceção clara aqui, em vez de virar gramas absurdas duas chamadas adiante.
+ * uma exceção clara aqui, em vez de virar gramas impossíveis lá na frente.
  */
 export default class DietaIaGenerator {
     private readonly selecaoPrompt;
-    private readonly quantidadesPrompt;
     private readonly aiService;
+    private readonly porcoesSolver;
 
     constructor(
         selecaoPrompt: DietaSelecaoPrompt,
-        quantidadesPrompt: DietaQuantidadesPrompt,
         aiService: AiService,
+        porcoesSolver: PorcoesSolver,
     ) {
         this.selecaoPrompt = selecaoPrompt;
-        this.quantidadesPrompt = quantidadesPrompt;
         this.aiService = aiService;
+        this.porcoesSolver = porcoesSolver;
     }
 
     async gerar(
@@ -93,59 +111,85 @@ export default class DietaIaGenerator {
                 return alimento;
             });
 
-            // Ids repetidos viram o mesmo alimento duas vezes na refeição, e a
-            // chamada 2 teria de dosar os dois — dedup aqui é mais simples.
+            // Ids repetidos viram o mesmo alimento duas vezes na refeição, e o
+            // solver teria de dosar os dois — dedup aqui é mais simples.
             const unicos = [...new Map(escolhidos.map((a) => [a.id, a])).values()];
+
+            this.exigirCobertura(nome, unicos);
 
             return { nome, alimentos: unicos };
         });
     }
 
-    /** CHAMADA 2 — devolve as refeições já com gramas. */
-    private async quantificar(
+    /**
+     * ETAPA 2 — as gramas, resolvidas pelo motor. Sem IA.
+     *
+     * Cada refeição é resolvida contra a SUA meta, e não contra a do dia: é a
+     * repartição que `EngineService.calcularDieta` já produziu. Resolver o dia
+     * inteiro de uma vez deixaria o solver livre para concentrar tudo numa
+     * refeição só.
+     *
+     * O nome vem do catálogo, não do que a IA escreveu: assim o app nunca exibe
+     * um nome que não corresponde ao id gravado.
+     */
+    private quantificar(
         resultado: ResultadoCalculo,
         refeicoes: RefeicaoSelecionada[],
-    ): Promise<Refeicao[]> {
-        const { system, user } = this.quantidadesPrompt.montar({ resultado, refeicoes });
-
-        const resposta = await this.aiService.gerarJson(system, user, "dieta:quantidades");
-        const dieta = this.parsearQuantidades(resposta);
+    ): Refeicao[] {
+        const metaPorNome = new Map(resultado.dieta.refeicoes.map((r) => [r.nome, r]));
 
         return refeicoes.map((selecionada) => {
-            const comGramas = dieta.refeicoes.find((r) => r.nome === selecionada.nome);
+            const meta = metaPorNome.get(selecionada.nome);
 
-            if (!comGramas?.itens?.length) {
-                throw new Error(
-                    `A IA não definiu as quantidades da refeição "${selecionada.nome}"`,
-                );
+            // O nome saiu de resultado.dieta.refeicoes em `selecionar`, então a
+            // meta existe. O guarda é contra a lista mudar de origem um dia.
+            if (!meta) {
+                throw new Error(`Sem meta calculada para a refeição "${selecionada.nome}"`);
             }
 
-            // Conferência mais apertada que a do catálogo inteiro: nesta etapa o
-            // universo válido é o que a PRÓPRIA IA escolheu na chamada 1.
-            const permitidos = new Map(selecionada.alimentos.map((a) => [a.id, a]));
+            const porId = new Map(selecionada.alimentos.map((a) => [a.id, a]));
 
-            const itens = comGramas.itens.map((item) => {
-                const alimento = permitidos.get(item.alimentoId);
-
-                if (!alimento) {
-                    throw new Error(
-                        `A IA quantificou um alimento que não estava na seleção da refeição "${selecionada.nome}" (id ${item.alimentoId})`,
-                    );
-                }
-
-                if (!Number.isFinite(item.gramas) || item.gramas <= 0) {
-                    throw new Error(
-                        `A IA devolveu uma quantidade inválida para "${alimento.nome}" (${item.gramas} g)`,
-                    );
-                }
-
-                // O nome vem do catálogo, não do que a IA escreveu: assim o app
-                // nunca exibe um nome que não corresponde ao id gravado.
-                return { alimentoId: alimento.id, nome: alimento.nome, gramas: item.gramas };
-            });
+            const itens = this.porcoesSolver
+                .resolver(selecionada.alimentos, {
+                    kcal: meta.kcal,
+                    proteina: meta.proteina,
+                    carboidrato: meta.carboidrato,
+                    gordura: meta.gordura,
+                })
+                .map((porcao) => ({
+                    alimentoId: porcao.alimentoId,
+                    nome: porId.get(porcao.alimentoId)!.nome,
+                    gramas: porcao.gramas,
+                }));
 
             return { nome: selecionada.nome, itens };
         });
+    }
+
+    /**
+     * Uma refeição principal precisa de base de carboidrato E de fonte de
+     * proteína.
+     *
+     * Sem as duas a meta é inalcançável por construção, e o solver entregaria o
+     * prato possível com um desvio enorme — um almoço de 1000 kcal montado só
+     * com legumes. Falhar aqui é mais honesto: o problema é da SELEÇÃO, e é ela
+     * que precisa ser refeita.
+     *
+     * Vale só para almoço e jantar. Num lanche a meta é pequena e fruta com
+     * iogurte a resolve.
+     */
+    private exigirCobertura(nome: string, alimentos: Alimento[]): void {
+        if (!REFEICOES_PRINCIPAIS.includes(nome)) return;
+
+        const papeis = alimentos.map(papelDe);
+
+        if (!papeis.includes("BASE_CARBO")) {
+            throw new Error(`A IA montou "${nome}" sem nenhuma base de carboidrato`);
+        }
+
+        if (!papeis.some((papel) => PAPEIS_PROTEICOS.includes(papel))) {
+            throw new Error(`A IA montou "${nome}" sem nenhuma fonte de proteína`);
+        }
     }
 
     private parsearSelecao(resposta: string): SelecaoDieta {
@@ -162,21 +206,5 @@ export default class DietaIaGenerator {
         }
 
         return selecao;
-    }
-
-    private parsearQuantidades(resposta: string): { refeicoes: Refeicao[] } {
-        let dieta: { refeicoes: Refeicao[] };
-
-        try {
-            dieta = JSON.parse(resposta) as { refeicoes: Refeicao[] };
-        } catch {
-            throw new Error("A IA retornou um JSON inválido nas quantidades");
-        }
-
-        if (!dieta.refeicoes?.length) {
-            throw new Error("A IA retornou as quantidades sem refeições");
-        }
-
-        return dieta;
     }
 }

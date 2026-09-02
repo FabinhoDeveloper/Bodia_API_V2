@@ -3,10 +3,10 @@ import CatalogoFilter from "../../src/prompts/catalogo.filter";
 import AiService from "../../src/services/ai.service";
 import DietaIaGenerator from "../../src/generators/dieta-ia.generator";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
+import PorcoesSolver from "../../src/generators/porcoes.solver";
 import TreinoIaGenerator from "../../src/generators/treino-ia.generator";
 import ValidadorMacros from "../../src/generators/validador-macros";
 import ValidadorVolume from "../../src/generators/validador-volume";
-import DietaQuantidadesPrompt from "../../src/prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../../src/prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../../src/prompts/treino.prompt";
 import { PerfilInput, PerfilParaPlano } from "../../src/types/perfil.types";
@@ -37,18 +37,6 @@ const FRANGO = 410;
 function selecaoValida() {
     return {
         refeicoes: REFEICOES.map((nome) => ({ nome, alimentoIds: [ARROZ, FRANGO] })),
-    };
-}
-
-function quantidadesValidas() {
-    return {
-        refeicoes: REFEICOES.map((nome) => ({
-            nome,
-            itens: [
-                { alimentoId: ARROZ, nome: "Arroz, tipo 1, cozido", gramas: 25 },
-                { alimentoId: FRANGO, nome: "Frango, peito, sem pele, grelhado", gramas: 50 },
-            ],
-        })),
     };
 }
 
@@ -86,7 +74,7 @@ function criarGerador(respostas: Partial<Record<string, unknown | string>>) {
 
     const planoIaGenerator = new PlanoIaGenerator(
         new CatalogoFilter(),
-        new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
+        new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
         new ValidadorMacros(),
         new ValidadorVolume(),
@@ -97,41 +85,48 @@ function criarGerador(respostas: Partial<Record<string, unknown | string>>) {
 
 const RESPOSTAS_OK = {
     "dieta:seleção": selecaoValida(),
-    "dieta:quantidades": quantidadesValidas(),
     treino: treinoValido(),
 };
 
 describe("PlanoIaGenerator", () => {
     const resultado = new EngineService().calcular(PERFIL);
 
-    it("monta o plano a partir das três chamadas", async () => {
+    // DUAS chamadas, não três: as gramas deixaram de ser pedidas ao modelo e
+    // passaram a ser resolvidas pelo PorcoesSolver.
+    it("monta o plano a partir das duas chamadas", async () => {
         const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK);
 
         const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-        expect(aiService.gerarJson).toHaveBeenCalledTimes(3);
+        expect(aiService.gerarJson).toHaveBeenCalledTimes(2);
+        expect(aiService.gerarJson.mock.calls.map((c) => c[2])).toEqual(
+            expect.arrayContaining(["dieta:seleção", "treino"]),
+        );
         expect(plano.dieta.refeicoes).toHaveLength(4);
         expect(plano.treino.sessoes[0].nome).toBe("Upper");
         expect(plano.observacoes).toBe("Beba água.");
     });
 
-    it("recalcula os macros a partir da TACO em vez de confiar no modelo", async () => {
+    it("recalcula os macros a partir da TACO, e não da palavra do modelo", async () => {
         const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
 
-        const { validacao } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+        const { plano, validacao } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-        // 4 refeições x (25g de arroz + 50g de frango):
-        // kcal = 4 x (32.065 + 79.595) = 446.6
-        expect(validacao.calorias.obtido).toBeCloseTo(446.6, 1);
+        const somaKcal = plano.dieta.refeicoes
+            .flatMap((r) => r.itens ?? [])
+            .reduce((total, item) => {
+                const alimento = item.alimentoId === ARROZ ? 128.26 : 159.19;
+                return total + (alimento * item.gramas) / 100;
+            }, 0);
+
+        expect(validacao.calorias.obtido).toBeCloseTo(somaKcal, 0);
         expect(validacao.calorias.meta).toBe(resultado.meta.caloriasAlvo);
-        expect(validacao.dentroDoLimite).toBe(false);
     });
 
-    it("usa o nome do catálogo, não o que a IA escreveu", async () => {
-        const quantidades = quantidadesValidas();
-        quantidades.refeicoes[0].itens[0].nome = "Arrroz inventado pela IA";
-
-        const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:quantidades": quantidades });
+    // O nome nunca vem do modelo — e agora nem chega a existir uma resposta dele
+    // sobre as porções de onde um nome errado pudesse vir.
+    it("usa o nome do catálogo", async () => {
+        const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
 
         const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
@@ -185,8 +180,8 @@ describe("PlanoIaGenerator", () => {
             );
         });
 
-        it("não chama a etapa de quantidades quando a seleção falha", async () => {
-            const { planoIaGenerator, aiService } = criarGerador({
+        it("falha com mensagem própria quando a seleção não é json", async () => {
+            const { planoIaGenerator } = criarGerador({
                 ...RESPOSTAS_OK,
                 "dieta:seleção": "isto não é json",
             });
@@ -194,56 +189,96 @@ describe("PlanoIaGenerator", () => {
             await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
                 "A IA retornou um JSON inválido na seleção de alimentos",
             );
+        });
 
-            const etapas = aiService.gerarJson.mock.calls.map((c) => c[2]);
-            expect(etapas).not.toContain("dieta:quantidades");
+        // Sem base de carboidrato ou sem proteína, a meta de um almoço é
+        // inalcançável por construção e o solver entregaria o prato possível com
+        // um desvio enorme. Falhar é mais honesto: o problema é da SELEÇÃO.
+        it("rejeita almoço sem base de carboidrato", async () => {
+            const selecao = selecaoValida();
+            // 100 = Brócolis, cozido — vegetal, não é base.
+            selecao.refeicoes[1].alimentoIds = [FRANGO, 100];
+
+            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
+
+            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+                /montou "Almoço" sem nenhuma base de carboidrato/,
+            );
+        });
+
+        it("rejeita almoço sem fonte de proteína", async () => {
+            const selecao = selecaoValida();
+            selecao.refeicoes[1].alimentoIds = [ARROZ, 100];
+
+            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
+
+            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+                /montou "Almoço" sem nenhuma fonte de proteína/,
+            );
+        });
+
+        // A conferência é só das refeições principais: num lanche a meta é
+        // pequena e uma fruta com iogurte a resolve.
+        it("aceita lanche sem base de carboidrato", async () => {
+            const selecao = selecaoValida();
+            selecao.refeicoes[2].alimentoIds = [FRANGO, 100];
+
+            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
+
+            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).resolves.toBeDefined();
         });
     });
 
-    describe("chamada 2 — quantidades", () => {
-        // O ganho da divisão: nesta etapa o universo válido não é o catálogo
-        // inteiro, é o punhado que a PRÓPRIA IA escolheu na chamada 1.
-        it("rejeita alimento que existe na TACO mas não estava na seleção", async () => {
-            const quantidades = quantidadesValidas();
-            // 82 = Batata, doce, cozida — real no catálogo, ausente da seleção.
-            quantidades.refeicoes[0].itens[0].alimentoId = 82;
+    describe("etapa 2 — porções", () => {
+        // A etapa deixou de ser uma chamada à IA. Os modos de falha que existiam
+        // aqui — id fora da seleção, gramas zeradas ou negativas, refeição sem
+        // quantidades — não têm mais como acontecer: o solver só devolve os ids
+        // que recebeu e sempre dentro das faixas de data/porcoes.ts.
+        it("resolve as gramas sem chamar a IA", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK);
 
-            const { planoIaGenerator } = criarGerador({
-                ...RESPOSTAS_OK,
-                "dieta:quantidades": quantidades,
-            });
+            const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /não estava na seleção da refeição "Café da manhã"/,
+            expect(aiService.gerarJson.mock.calls.map((c) => c[2])).not.toContain(
+                "dieta:quantidades",
             );
+            for (const refeicao of plano.dieta.refeicoes) {
+                expect(refeicao.itens).toHaveLength(2);
+                for (const item of refeicao.itens ?? []) {
+                    expect(item.gramas).toBeGreaterThan(0);
+                }
+            }
         });
 
-        it.each([0, -50])("rejeita gramas inválidas (%p)", async (gramas) => {
-            const quantidades = quantidadesValidas();
-            quantidades.refeicoes[0].itens[0].gramas = gramas;
+        // O sintoma que originou este trabalho: um almoço com 400 g de arroz. O
+        // teto de data/porcoes.ts para arroz cozido é 250 g.
+        it("mantém toda porção dentro da faixa do comível", async () => {
+            const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
 
-            const { planoIaGenerator } = criarGerador({
-                ...RESPOSTAS_OK,
-                "dieta:quantidades": quantidades,
-            });
+            const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /quantidade inválida/,
-            );
+            const arroz = plano.dieta.refeicoes
+                .flatMap((r) => r.itens ?? [])
+                .filter((item) => item.alimentoId === ARROZ);
+
+            expect(arroz.length).toBeGreaterThan(0);
+            for (const item of arroz) {
+                expect(item.gramas).toBeGreaterThanOrEqual(80);
+                expect(item.gramas).toBeLessThanOrEqual(250);
+            }
         });
 
-        it("rejeita refeição sem quantidades", async () => {
-            const quantidades = quantidadesValidas();
-            quantidades.refeicoes[2].itens = [];
-
-            const { planoIaGenerator } = criarGerador({
-                ...RESPOSTAS_OK,
-                "dieta:quantidades": quantidades,
-            });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /não definiu as quantidades da refeição "Lanche da tarde"/,
+        it("é determinístico: a mesma seleção devolve as mesmas gramas", async () => {
+            const primeira = await criarGerador(RESPOSTAS_OK).planoIaGenerator.gerar(
+                PERFIL_PLANO,
+                resultado,
             );
+            const segunda = await criarGerador(RESPOSTAS_OK).planoIaGenerator.gerar(
+                PERFIL_PLANO,
+                resultado,
+            );
+
+            expect(primeira.plano.dieta.refeicoes).toEqual(segunda.plano.dieta.refeicoes);
         });
     });
 

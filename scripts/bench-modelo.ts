@@ -12,11 +12,11 @@ import BenchmarkService from "../src/benchmark/benchmark.service";
 import { getIaClient, iaModel, iaParametros, iaTimeoutMs } from "../src/config/ia";
 import DietaIaGenerator from "../src/generators/dieta-ia.generator";
 import PlanoIaGenerator from "../src/generators/plano-ia.generator";
+import PorcoesSolver from "../src/generators/porcoes.solver";
 import TreinoIaGenerator from "../src/generators/treino-ia.generator";
 import ValidadorMacros from "../src/generators/validador-macros";
 import ValidadorVolume from "../src/generators/validador-volume";
 import CatalogoFilter from "../src/prompts/catalogo.filter";
-import DietaQuantidadesPrompt from "../src/prompts/dieta-quantidades.prompt";
 import DietaSelecaoPrompt from "../src/prompts/dieta-selecao.prompt";
 import TreinoPrompt from "../src/prompts/treino.prompt";
 import AiService from "../src/services/ai.service";
@@ -28,7 +28,7 @@ new BenchmarkService(
     new EngineService(),
     new PlanoIaGenerator(
         new CatalogoFilter(),
-        new DietaIaGenerator(new DietaSelecaoPrompt(), new DietaQuantidadesPrompt(), aiService),
+        new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
         new ValidadorMacros(),
         new ValidadorVolume(),
