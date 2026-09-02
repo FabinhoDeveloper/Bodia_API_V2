@@ -80,8 +80,9 @@ router.post("/onboarding", planController.gerar);
 router.get("/plano", autenticacao, planController.buscar);
 // RF20: gera outro plano para quem já tem conta e o grava na hora. O perfil vem
 // do banco. GRAVA na hora, mas só ENTRA EM VIGOR amanhã se o dia já tiver
-// refeição marcada — a resposta é o plano em vigor, com `planoAgendado` dizendo
-// a partir de quando o novo vale.
+// refeição marcada — a resposta traz o plano em vigor, com `planoAgendado`
+// dizendo a partir de quando o novo vale, e a `conferencia` dos validadores
+// (RF22), que antes só o onboarding recebia.
 router.post("/plano/regenerar", autenticacao, planController.regenerar);
 
 export default router;

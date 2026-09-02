@@ -9,7 +9,13 @@ import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
 import RefeicaoRepository from "../repositories/refeicao.repository";
 import { PerfilOnboardingInput } from "../types/perfil.types";
-import { GeradorDePlano, MeuPlano, OnboardingRequest, OnboardingResponse } from "../types/plano.types";
+import {
+    GeradorDePlano,
+    MeuPlano,
+    OnboardingRequest,
+    OnboardingResponse,
+    RegeneracaoResponse,
+} from "../types/plano.types";
 import EngineService from "./engine.service";
 
 /**
@@ -113,7 +119,7 @@ export default class PlanService {
      * `refeicaoId` registrados são os da prescrição anterior. Pior: remarcar o
      * mesmo almoço na ficha nova somava duas vezes, já que o id mudou.
      */
-    async regenerar(usuarioId: string): Promise<MeuPlano> {
+    async regenerar(usuarioId: string): Promise<RegeneracaoResponse> {
         const perfilBanco = await this.pesoRepository.buscarPerfil(usuarioId);
 
         if (!perfilBanco?.pesos[0]) {
@@ -128,7 +134,8 @@ export default class PlanService {
         };
 
         const resultado = this.engineService.calcular(perfil);
-        const { plano, validacao } = await this.geradorDePlano.gerar(perfil, resultado);
+        const validado = await this.geradorDePlano.gerar(perfil, resultado);
+        const { plano, validacao } = validado;
 
         console.log("[regenerar] conferência dos macros:", JSON.stringify(validacao, null, 2));
 
@@ -146,7 +153,14 @@ export default class PlanService {
         // Quando a vigência foi adiada, o que sai daqui é o plano DE HOJE, com
         // `planoAgendado` preenchido — e é justamente esse par que a tela da
         // dieta usa para explicar por que o cardápio não mudou.
-        return this.consultar(usuarioId);
+        //
+        // A conferência vai junto (RF22). Até aqui ela só era devolvida no
+        // onboarding, e o desvio de um plano regenerado ficava no log do
+        // servidor — invisível para quem apertou o botão.
+        return {
+            plano: await this.consultar(usuarioId),
+            conferencia: this.conferenciaMapper.montar(validado),
+        };
     }
 
     /**

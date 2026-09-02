@@ -217,6 +217,24 @@ export interface OnboardingResponse {
     conferencia: ConferenciaDTO;
 }
 
+/**
+ * O que o POST /api/plano/regenerar devolve.
+ *
+ * Mesmo par do onboarding, e pela mesma razão (RF22): o desvio medido pelos
+ * validadores acompanha o plano em vez de morrer no log do servidor. Antes só o
+ * onboarding o recebia, e quem gerava plano novo pelo Perfil não via nada.
+ *
+ * `plano` é o formato das TELAS (MeuPlano), e não o PlanoDTO do onboarding: aqui
+ * o plano já está gravado, e é dele que saem os ids que o app usa para marcar
+ * refeição e abrir treino.
+ *
+ * A conferência não entra em `MeuPlano` de propósito — o GET /api/plano lê do
+ * banco, onde não há validação a refazer, e o campo nasceria sempre nulo.
+ */
+export interface RegeneracaoResponse {
+    plano: MeuPlano;
+    conferencia: ConferenciaDTO;
+}
 
 // ---------------------------------------------------------------------------
 // MeuPlano — o contrato do GET /api/plano

@@ -602,7 +602,7 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
 | `GET` | `/api/plano` | → **200** o plano **em vigor hoje** no formato das telas (Home, Treino, Dieta, Perfil). `planoAgendado` traz o dia em que o plano gerado por último entra em vigor, ou `null`. | **404** usuário sem plano em vigor |
-| `POST` | `/api/plano/regenerar` | → **200** o plano **em vigor**, no mesmo formato do `GET`. O perfil vem do BANCO, não do payload: pedir outro cardápio não é ocasião para o app reenviar sexo, altura e objetivo. O plano novo é gravado na hora, mas só ENTRA EM VIGOR amanhã se o dia já tiver refeição marcada — ver "A ficha nova entra em vigor amanhã". A ficha anterior é desativada, nunca apagada. | **404** usuário sem perfil; **500** se a IA falhar |
+| `POST` | `/api/plano/regenerar` | → **200** `{ plano, conferencia }` — o plano **em vigor** no formato do `GET`, mais o desvio medido pelos validadores (RF22), que antes só o onboarding recebia. O perfil vem do BANCO, não do payload: pedir outro cardápio não é ocasião para o app reenviar sexo, altura e objetivo. O plano novo é gravado na hora, mas só ENTRA EM VIGOR amanhã se o dia já tiver refeição marcada — ver "A ficha nova entra em vigor amanhã". A ficha anterior é desativada, nunca apagada. | **404** usuário sem perfil; **500** se a IA falhar |
 
 ### Perfil, peso e conta — autenticado
 

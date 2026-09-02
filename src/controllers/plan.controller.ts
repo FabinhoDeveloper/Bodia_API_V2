@@ -35,10 +35,12 @@ export default class PlanController {
             .catch(next);
     };
 
+    // Devolve { plano, conferencia }, e não o plano cru: o desvio medido pelos
+    // validadores segue junto, como no onboarding (RF22).
     regenerar = (req: Request, res: Response, next: NextFunction) => {
         this.planService
             .regenerar(usuarioAutenticado(req))
-            .then((plano) => res.json(plano))
+            .then((resultado) => res.json(resultado))
             .catch(next);
     };
 }

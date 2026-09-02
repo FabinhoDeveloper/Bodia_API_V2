@@ -490,10 +490,22 @@ describe("PlanService.regenerar", () => {
     it("devolve o plano lido do banco, com os ids das telas", async () => {
         const { service } = servicoDeConsulta(USUARIO_COM_PLANO);
 
-        const plano = await service.regenerar("usuario-1");
+        const { plano } = await service.regenerar("usuario-1");
 
         expect(plano.treino.sessoes[0].id).toBe("s1");
         expect(plano.dieta.refeicoes[0].id).toBe("r1");
+    });
+
+    // RF22. Até aqui só o onboarding recebia a conferência, e o desvio de um
+    // plano regenerado morria no console.log do servidor: quem apertava "gerar
+    // plano novo" no Perfil não via nada.
+    it("devolve a conferência dos validadores junto do plano", async () => {
+        const { service } = servicoDeConsulta(USUARIO_COM_PLANO);
+
+        const { conferencia } = await service.regenerar("usuario-1");
+
+        expect(conferencia.dentroDoLimite).toBe(true);
+        expect(conferencia.macros.map((m) => m.nome)).toContain("Calorias");
     });
 
     it("recusa usuário sem peso registrado", async () => {
@@ -575,7 +587,7 @@ describe("PlanService.regenerar — quando o plano novo passa a valer", () => {
             new Date("2026-09-03T03:00:00.000Z"),
         );
 
-        const plano = await service.regenerar("usuario-1");
+        const { plano } = await service.regenerar("usuario-1");
 
         expect(plano.dieta.refeicoes[0].id).toBe("r1");
         expect(plano.planoAgendado).toEqual({ vigenteDe: "2026-09-03" });
