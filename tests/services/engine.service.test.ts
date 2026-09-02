@@ -115,10 +115,57 @@ describe("EngineService", () => {
             expect(resultado.meta.caloriasAlvo).toBe(2162);
         });
 
-        it("usa a massa magra (peso × (1 - %gordura)) como referência de proteína", () => {
-            expect(resultado.macros.proteina).toEqual({ g: 88, kcal: 352 });
+        // 65 kg x 1,7 = 110,5. Em MANUTENÇÃO a dose é sobre peso TOTAL (faixa
+        // ISSN 1,4-2,0 g/kg, Stokes et al. 2018), então os 20% de gordura
+        // declarados não entram na conta.
+        it("usa o peso total como referência de proteína em manutenção", () => {
+            expect(resultado.macros.proteina).toEqual({ g: 111, kcal: 444 });
             expect(resultado.macros.gordura).toEqual({ g: 60, kcal: 541 });
-            expect(resultado.macros.carboidrato).toEqual({ g: 317, kcal: 1269 });
+            expect(resultado.macros.carboidrato).toEqual({ g: 294, kcal: 1177 });
+        });
+
+        // O bug que isto fecha: a dose de manutenção era multiplicada pela massa
+        // magra, então declarar mais gordura corporal REDUZIA a proteína
+        // prescrita — a 20% dava 1,36 g/kg, abaixo do piso da faixa citada. E
+        // como o carboidrato é o resíduo das calorias, cada grama de proteína
+        // perdida virava carboidrato: era parte do motivo de um almoço pedir
+        // 400 g de arroz.
+        it("não muda a proteína de manutenção conforme o percentual de gordura", () => {
+            const semPercentual = engineService.calcular(
+                perfilBase({
+                    sexo: "F",
+                    dataNascimento: dataNascimentoParaIdade(25),
+                    peso: 65,
+                    altura: 165,
+                    percentualGordura: null,
+                    nivelAtividade: "moderado",
+                    nivelExperiencia: "avancado",
+                    objetivo: "manter",
+                    diasPorSemana: 4,
+                }),
+            );
+
+            expect(semPercentual.macros.proteina).toEqual(resultado.macros.proteina);
+        });
+
+        // O déficit continua sendo o único prescrito sobre massa magra (2,3-3,1
+        // g/kg de massa magra, Jäger et al. 2017): 52 kg x 2,7 = 140,4.
+        it("volta a usar a massa magra quando o objetivo é perder", () => {
+            const emDeficit = engineService.calcular(
+                perfilBase({
+                    sexo: "F",
+                    dataNascimento: dataNascimentoParaIdade(25),
+                    peso: 65,
+                    altura: 165,
+                    percentualGordura: 20,
+                    nivelAtividade: "moderado",
+                    nivelExperiencia: "avancado",
+                    objetivo: "perder",
+                    diasPorSemana: 4,
+                }),
+            );
+
+            expect(emDeficit.macros.proteina.g).toBe(140);
         });
 
         it("monta o split Upper/Lower para 4 dias", () => {

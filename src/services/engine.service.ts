@@ -67,10 +67,26 @@ export default class EngineService {
         ganhar: 0.125,
     };
 
+    // ATENÇÃO: a BASE de cada linha é diferente, e é o que `massaReferenciaProteina`
+    // consulta em PROTEINA_SOBRE_MASSA_MAGRA. Só o déficit é prescrito sobre massa
+    // magra pela ISSN; manutenção e ganho são sobre peso total. Tratar as três
+    // linhas como se tivessem a mesma base foi exatamente o bug que entregava
+    // 1,42 g/kg a quem declarava percentual de gordura em manutenção.
     private static readonly PROTEINA_G_POR_KG: Record<Objetivo, number> = {
         perder: 2.7, // g/kg de massa magra (faixa ISSN 2,3-3,1, Jäger et al. 2017)
         manter: 1.7, // g/kg de peso total (faixa ISSN 1,4-2,0, Stokes et al. 2018)
         ganhar: 1.8, // g/kg de peso total, topo da faixa por causa do superávit anabólico
+    };
+
+    /**
+     * Quais objetivos prescrevem a proteína sobre MASSA MAGRA, e não sobre peso
+     * total. Tabela, e não um `if`, porque é a mesma natureza de
+     * PROTEINA_G_POR_KG: uma linha por objetivo, decidida pela literatura.
+     */
+    private static readonly PROTEINA_SOBRE_MASSA_MAGRA: Record<Objetivo, boolean> = {
+        perder: true,
+        manter: false,
+        ganhar: false,
     };
 
     private static readonly GORDURA_PERCENTUAL_KCAL = 0.25; // meio da faixa ISSN 20-35% (Jäger et al. 2017)
@@ -284,11 +300,32 @@ export default class EngineService {
         return { objetivo: perfil.objetivo, ajustePercentual, caloriasAlvo: Math.max(calculado, piso) };
     }
 
+    /**
+     * Sobre qual massa a prescrição de proteína incide.
+     *
+     * O percentual de gordura só desconta a massa gorda quando o objetivo pede
+     * a dose sobre MASSA MAGRA — hoje, apenas o déficit (2,3-3,1 g/kg de massa
+     * magra, Jäger et al. 2017). Manutenção e ganho são prescritos sobre PESO
+     * TOTAL (1,4-2,0 g/kg, Stokes et al. 2018), e descontar ali produzia o
+     * efeito invertido: quanto MAIS gordura o usuário declarava, MENOS proteína
+     * recebia — 1,36 g/kg a 20%, abaixo do piso da faixa citada.
+     *
+     * O erro não parava na proteína. O carboidrato é o resíduo das calorias, e
+     * cada grama de proteína que deixava de ser prescrita virava carboidrato:
+     * era parte do motivo de um almoço pedir 400 g de arroz.
+     *
+     * Sem percentual informado não há massa magra a estimar, e o peso total
+     * responde pelos três objetivos.
+     */
+    private massaDeReferencia(perfil: PerfilInput): number {
+        if (perfil.percentualGordura == null) return perfil.peso;
+        if (!EngineService.PROTEINA_SOBRE_MASSA_MAGRA[perfil.objetivo]) return perfil.peso;
+
+        return perfil.peso * (1 - perfil.percentualGordura / 100);
+    }
+
     private calcularMacros(perfil: PerfilInput, caloriasAlvo: number): ResultadoCalculo["macros"] {
-        const massaReferenciaProteina =
-            perfil.percentualGordura != null
-                ? perfil.peso * (1 - perfil.percentualGordura / 100)
-                : perfil.peso;
+        const massaReferenciaProteina = this.massaDeReferencia(perfil);
 
         // RF17 na SAÍDA: o teto impede que proteína e gordura sozinhas estourem
         // a meta. Sem ele o caso extremo virava erro de geração — o usuário via
