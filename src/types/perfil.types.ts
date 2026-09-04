@@ -38,6 +38,17 @@ export interface PerfilOnboardingInput extends PerfilInput {
 export interface PerfilParaPlano {
     restricoesAlimentares: string[];
     restricoesFisicas: string[];
+    /**
+     * Recorta o catálogo de exercícios pela dificuldade técnica que este nível
+     * comporta (`data/dificuldade-treino.ts`).
+     *
+     * Antes disto, `nivelExperiencia` era lido num único ponto do código inteiro
+     * — o EngineService, para escolher 10/14/18 séries por grupo — e não chegava
+     * a `generators/` nem a `prompts/`. O resultado é que uma iniciante recebia
+     * agachamento livre com barra: para o seletor, ele era indistinguível de uma
+     * cadeira extensora.
+     */
+    nivelExperiencia: NivelExperiencia;
 }
 
 export interface MetaRefeicao {

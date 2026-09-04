@@ -363,6 +363,7 @@ export default class PlanoIaGenerator {
             exercicios: this.catalogoFilter.filtrarExercicios(
                 perfil.restricoesFisicas,
                 resultado.treino.sessoes.map((sessao) => sessao.nome),
+                perfil.nivelExperiencia,
             ),
         };
     }

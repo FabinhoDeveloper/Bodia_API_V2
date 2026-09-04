@@ -44,7 +44,7 @@ REGRAS INVIOLÁVEIS:
 3. Crie uma sessão para cada sessão informada, com o nome exato que foi dado.
 4. Cada exercício precisa de: exercicioId, nome, séries e faixa de repetições.
 5. Ordene do exercício mais composto para o mais isolado dentro de cada sessão.
-6. A lista já foi filtrada para as restrições físicas do usuário. Tudo nela é seguro.
+6. A lista já foi filtrada para as restrições físicas do usuário E para o nível de experiência dele. Tudo nela é seguro e adequado — escolha livremente dentro dela.
 
 ## Por que os números são o que são
 

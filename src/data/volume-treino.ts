@@ -1,4 +1,5 @@
-import { PapelGrupo, VolumeGrupo } from "../types/perfil.types";
+import { NivelExperiencia, PapelGrupo, VolumeGrupo } from "../types/perfil.types";
+import { Dificuldade } from "./dificuldade-treino";
 
 /**
  * Limites e política de volume de treino.
@@ -90,6 +91,32 @@ export const GRUPOS_POR_SESSAO: Record<string, Record<PapelGrupo, string[]>> = {
         primario: ["Peito", "Costas", "Quadríceps"],
         secundario: ["Ombro", "Posterior de coxa"],
     },
+};
+
+/**
+ * Até que dificuldade técnica cada nível recebe exercício.
+ *
+ * Vive aqui pela mesma razão que GRUPOS_POR_SESSAO: é política, consumida por
+ * quem filtra o catálogo, e um limite que só existisse dentro da função que o
+ * aplica não poderia ser conferido por um teste nem citado por outra camada —
+ * foi exatamente assim que a contradição do volume passou despercebida.
+ *
+ * O iniciante para em MEDIO. Isso NÃO o deixa sem peso livre: pela regra de
+ * `data/dificuldade-treino.ts`, halteres em grupo grande e barra em grupo
+ * pequeno são MEDIO, então supino com halteres e rosca direta com barra
+ * continuam no catálogo dele. O que sai são os movimentos que dependem mais de
+ * técnica: agachamento livre, terra, supino com barra, barra fixa. É o que
+ * mantém a prescrição alinhada ao "inclua peso livre E máquina em todos os
+ * níveis" do ACSM (Ratamess et al., 2009).
+ *
+ * Intermediário e avançado recebem tudo. A distinção entre os dois já é feita
+ * pelo volume (SERIES_POR_GRUPO_SEMANA); repeti-la aqui seria inventar uma
+ * segunda régua sem fonte.
+ */
+export const DIFICULDADE_POR_NIVEL: Record<NivelExperiencia, Dificuldade> = {
+    iniciante: "MEDIO",
+    intermediario: "DIFICIL",
+    avancado: "DIFICIL",
 };
 
 /** Quantos exercícios um orçamento exige, no melhor caso. */

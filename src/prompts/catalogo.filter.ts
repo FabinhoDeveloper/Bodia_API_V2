@@ -1,6 +1,9 @@
 import { ALIMENTOS, Alimento } from "../data/alimentos";
 import { EXERCICIOS, Exercicio, Sessao } from "../data/exercicios";
+import { Dificuldade, cabeNoTeto, dificuldadeDe, proximoTeto } from "../data/dificuldade-treino";
+import { DIFICULDADE_POR_NIVEL, GRUPOS_POR_SESSAO } from "../data/volume-treino";
 import ValidationError from "../errors/validation.error";
+import { NivelExperiencia } from "../types/perfil.types";
 
 interface RegraRestricao {
     categorias: string[];
@@ -121,14 +124,33 @@ export default class CatalogoFilter {
         return permitidos;
     }
 
-    filtrarExercicios(restricoes: string[], sessoes: string[]): Exercicio[] {
+    /**
+     * O catálogo de exercícios que o modelo vai receber.
+     *
+     * Três cortes, todos AND: a articulação lesionada, o split do usuário e —
+     * desde que `nivelExperiencia` passou a chegar até aqui — a dificuldade
+     * técnica que o nível dele comporta. Ver `data/dificuldade-treino.ts` para
+     * o porquê do terceiro, incluindo o que a literatura sustenta e o que não.
+     *
+     * `nivel` é opcional para não quebrar quem chama sem ele; ausente, nenhum
+     * corte por dificuldade acontece.
+     */
+    filtrarExercicios(
+        restricoes: string[],
+        sessoes: string[],
+        nivel?: NivelExperiencia,
+    ): Exercicio[] {
         const lesoes = new Set(restricoes);
 
-        const permitidos = EXERCICIOS.filter((exercicio) => {
+        const seguros = EXERCICIOS.filter((exercicio) => {
             const seguro = !exercicio.articulacoes.some((articulacao) => lesoes.has(articulacao));
             const serveAoSplit = exercicio.sessoes.some((sessao) => sessoes.includes(sessao));
             return seguro && serveAoSplit;
         });
+
+        const permitidos = nivel
+            ? this.recortarPorNivel(seguros, sessoes, DIFICULDADE_POR_NIVEL[nivel])
+            : seguros;
 
         // Cada sessão do split precisa ter exercício sobrando, senão o modelo
         // receberia um treino impossível de montar.
@@ -143,5 +165,74 @@ export default class CatalogoFilter {
         }
 
         return permitidos;
+    }
+
+    /**
+     * O corte por dificuldade, com uma válvula de folga por GRUPO MUSCULAR.
+     *
+     * O teto do nível vale para todo mundo, exceto onde ele deixaria um grupo
+     * com orçamento de séries sem nenhum exercício. Aí ele sobe um degrau só
+     * naquele grupo, e o relaxamento vai para o log.
+     *
+     * A folga existe porque o corte se SOMA às restrições físicas, e a
+     * combinação é que aperta: sozinho, o teto de iniciante deixa pelo menos
+     * três exercícios em todo grupo orçado (o mais apertado é posterior de coxa,
+     * com mesa flexora, cadeira flexora e flexora em pé). Junto de uma lesão de
+     * joelho ou lombar, pode zerar.
+     *
+     * É o mesmo espírito de `EngineService.orcarSessao`, que apara o orçamento
+     * até caber em vez de falhar: um plano com um exercício acima do nível é
+     * melhor que um 400 na cara de quem só queria treinar.
+     */
+    private recortarPorNivel(
+        exercicios: Exercicio[],
+        sessoes: string[],
+        teto: Dificuldade,
+    ): Exercicio[] {
+        const relaxados = new Set(this.gruposSemExercicio(exercicios, sessoes, teto));
+
+        for (const grupo of relaxados) {
+            console.log(
+                `[treino] "${grupo}" não tem exercício até ${teto} — ` +
+                    `teto relaxado para ${proximoTeto(teto)} neste grupo`,
+            );
+        }
+
+        return exercicios.filter((exercicio) => {
+            const tetoDoGrupo = relaxados.has(exercicio.grupoMuscular) ? proximoTeto(teto) : teto;
+
+            return cabeNoTeto(dificuldadeDe(exercicio), tetoDoGrupo);
+        });
+    }
+
+    /**
+     * Os grupos que TÊM orçamento de séries em alguma sessão do split e que
+     * ficariam sem nenhum exercício sob este teto.
+     *
+     * Só grupos orçados entram na conta: adutores e antebraço estão no catálogo
+     * mas não aparecem em `GRUPOS_POR_SESSAO`, então ficar sem exercício neles
+     * não deixa buraco nenhum na prescrição.
+     */
+    private gruposSemExercicio(
+        exercicios: Exercicio[],
+        sessoes: string[],
+        teto: Dificuldade,
+    ): string[] {
+        const orcados = new Set(
+            sessoes.flatMap((sessao) => {
+                const papeis = GRUPOS_POR_SESSAO[sessao];
+
+                return papeis ? [...papeis.primario, ...papeis.secundario] : [];
+            }),
+        );
+
+        return [...orcados].filter(
+            (grupo) =>
+                !exercicios.some(
+                    (exercicio) =>
+                        exercicio.grupoMuscular === grupo &&
+                        cabeNoTeto(dificuldadeDe(exercicio), teto),
+                ),
+        );
     }
 }

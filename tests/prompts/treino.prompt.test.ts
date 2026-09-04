@@ -6,7 +6,7 @@ import {
     MAX_SERIES_POR_EXERCICIO,
     MIN_EXERCICIOS_POR_SESSAO,
 } from "../../src/data/volume-treino";
-import { PerfilInput } from "../../src/types/perfil.types";
+import { NivelExperiencia, PerfilInput } from "../../src/types/perfil.types";
 
 const PERFIL: PerfilInput = {
     sexo: "F",
@@ -26,12 +26,13 @@ describe("TreinoPrompt", () => {
     const catalogoFilter = new CatalogoFilter();
     const resultado = new EngineService().calcular(PERFIL);
 
-    function montar(restricoesFisicas: string[] = []) {
+    function montar(restricoesFisicas: string[] = [], nivel?: NivelExperiencia) {
         return prompt.montar({
             resultado,
             exercicios: catalogoFilter.filtrarExercicios(
                 restricoesFisicas,
                 resultado.treino.sessoes.map((s) => s.nome),
+                nivel,
             ),
             restricoesFisicas,
         });
@@ -121,6 +122,25 @@ describe("TreinoPrompt", () => {
 
         expect(comJoelho.length).toBeLessThan(semRestricao.length);
         expect(comJoelho).toContain("Joelho");
+    });
+
+    // O corte por nível é do CÓDIGO, não do prompt: o modelo não recebe coluna
+    // de dificuldade nem instrução de preferência. Ele não pode violar uma regra
+    // sobre um exercício que nunca viu — a mesma razão do catalogo.filter.
+    it("não envia ao iniciante o exercício acima do nível dele", () => {
+        const iniciante = montar([], "iniciante").user;
+        const avancado = montar([], "avancado").user;
+
+        expect(iniciante).not.toContain("Agachamento livre com barra");
+        expect(iniciante).not.toContain("Supino reto com barra");
+        expect(avancado).toContain("Agachamento livre com barra");
+        expect(iniciante.length).toBeLessThan(avancado.length);
+    });
+
+    // A frase precisa continuar verdadeira: a lista agora é filtrada por dois
+    // critérios, não um.
+    it("avisa o modelo de que a lista já vem filtrada pelo nível", () => {
+        expect(montar([], "iniciante").system).toContain("nível de experiência");
     });
 
     it("pede a resposta em json com exercicioId, séries e repetições", () => {

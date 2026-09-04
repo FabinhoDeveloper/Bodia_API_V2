@@ -25,7 +25,11 @@ const PERFIL: PerfilInput = {
     numeroRefeicoes: 4,
 };
 
-const PERFIL_PLANO: PerfilParaPlano = { restricoesAlimentares: [], restricoesFisicas: [] };
+const PERFIL_PLANO: PerfilParaPlano = {
+    restricoesAlimentares: [],
+    restricoesFisicas: [],
+    nivelExperiencia: "iniciante",
+};
 
 // numeroRefeicoes: 4 -> estes são os nomes que o EngineService gera.
 const REFEICOES = ["Café da manhã", "Almoço", "Lanche da tarde", "Jantar"];
@@ -47,7 +51,9 @@ function treinoValido() {
             {
                 nome: "Upper",
                 exercicios: [
-                    { exercicioId: 1, nome: "Supino reto com barra", series: 4, repeticoes: "8-10" },
+                    // Máquina, e não "Supino reto com barra" (id 1): o PERFIL_PLANO é
+                    // iniciante, e o catálogo dele não tem mais barra em grupo grande.
+                    { exercicioId: 6, nome: "Supino reto na máquina", series: 4, repeticoes: "8-10" },
                 ],
             },
         ],
@@ -218,7 +224,7 @@ describe("PlanoIaGenerator", () => {
             const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
 
             const { plano } = await planoIaGenerator.gerar(
-                { restricoesAlimentares: ["Vegano"], restricoesFisicas: [] },
+                { restricoesAlimentares: ["Vegano"], restricoesFisicas: [], nivelExperiencia: "iniciante" },
                 resultado,
             );
 

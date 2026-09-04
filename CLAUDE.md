@@ -508,6 +508,38 @@ Filtra os catálogos **antes** de montar o prompt. O modelo não recebe leite pa
 
 Regra ao mexer nas listas de exclusão: **falso positivo é aceitável, falso negativo não**. Remover um alimento seguro custa variedade; manter um proibido pode machucar alguém. A exceção `VEGETAIS_COM_NOME_DE_LATICINIO` existe porque "Couve, manteiga" é hortaliça e "Soja, queijo (tofu)" é vegano — sem ela, o filtro de lactose comeria a couve.
 
+### O catálogo do iniciante não tem agachamento livre
+
+Até aqui `nivelExperiencia` era lido em **um único ponto do código inteiro** — `EngineService.calcularTreino`, para escolher 10/14/18 séries por grupo — e sumia. Não chegava a `generators/` nem a `prompts/`. O efeito na tela: uma **iniciante** recebia agachamento livre com barra e supino com barra, porque para o seletor de exercícios "Agachamento livre com barra" e "Cadeira extensora" eram indistinguíveis.
+
+**O que a literatura sustenta, e o que não.** A fundamentação teórica não cobre seleção de exercício por nível — a seção 3.3 vai de volume a splits e para. Fora dela:
+
+- **Máquina e peso livre entregam o mesmo resultado.** Haugen et al. (2023), meta-análise de 13 estudos e 1016 participantes: sem diferença em hipertrofia, ganho de força específico da modalidade testada, e **sem diferença entre treinados e destreinados**. Pôr iniciante em máquina não custa resultado.
+- **O ACSM não manda evitar barra.** O position stand de 2009 (Ratamess et al.) recomenda **incluir** peso livre e máquina, mono e multiarticulares, em todos os níveis. Por isso o corte aqui é por **complexidade**, não por "peso livre": rosca direta com barra e supino com halteres continuam no catálogo do iniciante.
+- **O que sustenta o corte é técnica e supervisão.** Lesão em treino resistido vem de técnica ruim, carga excessiva e falta de supervisão qualificada, e o risco é maior em ambiente não supervisionado. O BodIA prescreve para quem treina **sozinho** — e, como peso livre não compra hipertrofia extra, enviesar o começo para movimento guiado sai de graça.
+
+**Como funciona.** `Exercicio` ganhou `equipamento` (`MAQUINA`, `POLIA`, `SMITH`, `HALTER`, `BARRA`, `PESO_CORPORAL`), escrito nas 100 entradas. É escrito, e não deduzido do nome, porque **37 dos 100 não dizem o equipamento nele**: "Leg press 45 graus", "Cadeira extensora" e "Hack squat" são máquina sem a palavra máquina; "Levantamento terra" e "Good morning" são barra sem a palavra barra.
+
+`data/dificuldade-treino.ts` deriva daí, como `descanso-treino.ts` faz com o descanso — a regra é **equipamento × tamanho do grupo**, que é literalmente o conselho de quadra ("para músculo grande, prefira máquina"):
+
+| equipamento | grupo pequeno | grupo grande |
+|---|---|---|
+| `MAQUINA`, `POLIA`, `SMITH` | FACIL | FACIL |
+| `HALTER`, `PESO_CORPORAL` | FACIL | MEDIO |
+| `BARRA` | MEDIO | **DIFICIL** |
+
+O smith fica com máquina de propósito: a barra corre num trilho, e é justamente a estabilização que o trilho remove que torna o agachamento livre difícil. `DIFICULDADE_POR_EXERCICIO` cobre o que a regra erra, com o motivo em cada linha — barra fixa e mergulho em paralelas sobem para DIFICIL (peso corporal, mas exigem levantar o próprio corpo), o hip thrust desce para MEDIO (barra, mas tronco apoiado e amplitude curta).
+
+`DIFICULDADE_POR_NIVEL` (em `volume-treino.ts`, junto das outras políticas) para o iniciante em MEDIO. Intermediário e avançado recebem tudo: a distinção entre os dois já é feita pelo volume, e repeti-la aqui seria inventar uma segunda régua sem fonte.
+
+**O corte é do código, não do prompt.** O modelo não recebe coluna de dificuldade nem instrução de preferência — mesma doutrina do `catalogo.filter` para restrição alimentar: ele não pode violar uma regra sobre um exercício que nunca viu. A única mudança no `treino.prompt` foi a frase que afirmava que a lista vinha filtrada só pelas restrições físicas, que deixaria de ser verdade.
+
+**A válvula de folga.** O corte por nível **soma** ao corte por lesão, e é a combinação que aperta. Se um grupo **com orçamento de séries** ficar sem nenhum exercício, `CatalogoFilter` sobe o teto um degrau **só naquele grupo** e registra no log. Mesmo espírito do `orcarSessao`, que apara o orçamento até caber: um plano com um exercício acima do nível é melhor que um 400 na cara de quem só queria treinar.
+
+Sozinho, o teto do iniciante deixa folga em todo grupo orçado — **com uma exceção conhecida e testada**: no split de 2 dias (Corpo inteiro), posterior de coxa só tem stiff com barra marcado para full body; os três flexores de máquina não são. E não dá para simplesmente marcá-los, porque `sessoes` carrega **dois** significados — "cabe num full body" e, em `descanso-treino.ts`, "é multiarticular" —, e marcar a mesa flexora lhe daria 120 s de descanso. Enquanto for assim, o iniciante de 2 dias recebe o stiff pela válvula. `tests/data/dificuldade-treino.test.ts` guarda esse caso e falha no dia em que o catálogo melhorar.
+
+**A progressão é manual**, pelo `PATCH /api/perfil` seguido de regenerar. E o **split ainda ignora o nível**: `SPLIT_POR_DIAS` é indexado só por `diasPorSemana`, então um iniciante que escolhe 6 dias recebe PPLx2 igual a um avançado — ver "Próximos passos".
+
 ### O volume de treino sai pronto do motor, não é dividido pelo LLM
 
 `EngineService` entrega, por sessão, **quantas séries cada grupo muscular recebe naquela sessão** — já dividido pela frequência semanal. O prompt só pede exercícios que somem aquilo.
@@ -785,6 +817,8 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 - **O retry esgota as três tentativas nos dois perfis medidos.** Isso diz que o desvio residual é da META, não da seleção — nenhuma escolha de alimento fecha o que as duas linhas acima mantêm aberto. Enquanto for assim, o retry está pagando ~5 s e duas chamadas por uma melhora pequena; se as metas forem corrigidas, ele deve passar a disparar raramente. Vale remedir `conferencia.tentativas` depois de qualquer mexida nelas.
 - **O fixture não passa pelo solver.** `SIMULAR_IA=true` devolve `data/plano-simulado.ts` com gramas fixas e quatro refeições, independentemente do perfil — limitação já documentada no próprio arquivo, mas que agora significa que o caminho padrão de desenvolvimento não exercita as porções.
 - **Remedir o `bench-modelo.ts`.** A tabela dele (`gpt-4o-mini` 6,6 s, `gpt-5` 22,5 s) é de quando a geração eram três chamadas em sequência; medido agora com duas chamadas mais o retry, o `gpt-5` fecha em 9,5–11,5 s. O veredito "gpt-5 não atende o RNF02" **caiu**, mas o script ainda não foi rodado de novo para a comparação entre modelos ficar honesta. O gargalo continua sendo a trilha do TREINO, por causa dos tokens de raciocínio: se sobrar tempo a cortar, é o `treino.prompt` que precisa encolher — não a seleção de alimentos, que é o maior prompt mas a etapa mais rápida.
+- **O split ainda ignora o nível de experiência.** `SPLIT_POR_DIAS` é indexado só por `diasPorSemana`: um iniciante que escolhe 6 dias recebe PPLx2 exatamente como um avançado. A seleção de exercício já respeita o nível (ver "O catálogo do iniciante não tem agachamento livre"); a estrutura da semana, não.
+- **Posterior de coxa não tem flexor de máquina no full body.** Dos seis exercícios do grupo, só o stiff com barra está marcado para "Corpo inteiro", então o iniciante de 2 dias o recebe pela válvula de folga. Consertar exige separar os dois significados de `sessoes` — "cabe num full body" e "é multiarticular", que `descanso-treino.ts` usa para o tempo de descanso.
 - **O padrão brasileiro é instrução, não garantia.** Se voltar a aparecer merluza no café da manhã, ver `padrao-refeicoes.ts` — o conserto estrutural é o filtro por refeição.
 - **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
 - **Fundamentar as constantes sem citação**: `FRACAO_SECUNDARIO` (`data/volume-treino.ts`), `ML_POR_KG` (`data/hidratacao.ts`) e `KCAL_MIN_ABSOLUTO` (`data/limites-seguranca.ts`). Todas têm o aviso no próprio arquivo. Ver `Fontes_Volume_e_Descanso.md`.

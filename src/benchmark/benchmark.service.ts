@@ -41,7 +41,7 @@ const PERFIL_FICTICIO: PerfilOnboardingInput = {
     altura: 165,
     percentualGordura: 12,
     nivelAtividade: "leve",
-    nivelExperiencia: "intermediario",
+    nivelExperiencia: "iniciante",
     objetivo: "ganhar", // perda de gordura / recomposição
     diasPorSemana: 3,
     numeroRefeicoes: 4,
@@ -90,6 +90,7 @@ export default class BenchmarkService {
             {
                 restricoesAlimentares: PERFIL_FICTICIO.restricoesAlimentares,
                 restricoesFisicas: PERFIL_FICTICIO.restricoesFisicas,
+                nivelExperiencia: PERFIL_FICTICIO.nivelExperiencia,
             },
             resultado,
         );

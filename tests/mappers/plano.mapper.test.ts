@@ -149,7 +149,7 @@ describe("PlanoSimuladoGenerator", () => {
     it("devolve o fixture sem chamar a IA", async () => {
         const resultado = engineService.calcular(PERFIL);
         const { plano } = await simulado.gerar(
-            { restricoesAlimentares: [], restricoesFisicas: [] },
+            { restricoesAlimentares: [], restricoesFisicas: [], nivelExperiencia: "iniciante" },
             resultado,
         );
 
@@ -177,7 +177,7 @@ describe("PlanoSimuladoGenerator", () => {
     it("confere os macros de verdade contra a meta do perfil", async () => {
         const resultado = engineService.calcular(PERFIL);
         const { validacao } = await simulado.gerar(
-            { restricoesAlimentares: [], restricoesFisicas: [] },
+            { restricoesAlimentares: [], restricoesFisicas: [], nivelExperiencia: "iniciante" },
             resultado,
         );
 
