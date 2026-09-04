@@ -18,6 +18,26 @@ export interface ContextoSelecao {
 }
 
 /**
+ * O pedido de UMA refeição, quando a que veio na seleção não passou na
+ * conferência do `DietaIaGenerator`.
+ *
+ * `motivo` e `instrucao` são produzidos lá, por quem conferiu: aqui só se
+ * escreve o texto. É a mesma divisão que existe entre `AjusteSelecao` e o campo
+ * `ajuste` acima — o prompt monta, quem sabe o que precisa ser dito é quem mediu.
+ */
+export interface ContextoReparo {
+    resultado: ResultadoCalculo;
+    alimentos: Alimento[];
+    restricoesAlimentares: string[];
+    /** O nome exato da refeição a refazer. */
+    refeicao: string;
+    /** O que estava errado, em português. */
+    motivo: string;
+    /** O que fazer, em linguagem de comida. */
+    instrucao: string;
+}
+
+/**
  * CHAMADA 1 da dieta: escolher QUAIS alimentos compõem cada refeição.
  *
  * Esta chamada não calcula nada — nem gramas, nem calorias. A separação existe
@@ -38,6 +58,26 @@ export default class DietaSelecaoPrompt {
         return {
             system: this.montarSystem(contexto),
             user: this.montarUser(contexto),
+        };
+    }
+
+    /**
+     * O pedido de UMA refeição, quando a que veio não passou na conferência.
+     *
+     * Refaz só a refeição culpada, e não o dia: as outras já estavam boas, e
+     * outra rodada completa gastaria uma resposta grande para arriscar
+     * estragá-las. O envelope de resposta é o MESMO da seleção completa, com uma
+     * entrada só — assim o gerador reaproveita o parser que já tem, em vez de
+     * manter um segundo formato que pode divergir dele.
+     *
+     * O catálogo inteiro vai junto de novo: é ele que garante que o modelo só
+     * escolha ids permitidos, e é a mesma lista que ele já viu — nenhum alimento
+     * novo aparece por ser um reparo.
+     */
+    montarReparo(contexto: ContextoReparo): PromptMontado {
+        return {
+            system: this.montarSystemReparo(contexto),
+            user: this.montarUserReparo(contexto),
         };
     }
 
@@ -105,6 +145,69 @@ Os números servem para você julgar se o alimento cabe na refeição; não são
 ${alimentos.map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`).join("\n")}
 ${this.montarAjuste(contexto.ajuste)}
 Escolha os alimentos de cada refeição em json.`;
+    }
+
+    private montarSystemReparo(contexto: ContextoReparo): string {
+        return `Você monta o cardápio de um aplicativo brasileiro de nutrição, o BodIA.
+
+## Sua única tarefa
+
+REFAZER UMA refeição — "${contexto.refeicao}" — que você já montou e que foi recusada. Nada além dela.
+
+REGRAS INVIOLÁVEIS:
+1. NÃO informe quantidade, gramas, calorias ou qualquer número nutricional. Outra etapa calcula as porções.
+2. Escolha SOMENTE alimentos da lista fornecida, pelo id exato. Nunca invente um item nem cite um id que não esteja na lista.
+3. Devolva SÓ a refeição "${contexto.refeicao}". Não monte as outras refeições do dia.
+4. Use de 3 a 5 alimentos (2 a 4 se for lanche ou ceia).
+5. Se for refeição principal (almoço, jantar), ela precisa de UMA BASE DE CARBOIDRATO, UMA FONTE DE PROTEÍNA e UMA FONTE DE GORDURA. Foi a falta de uma dessas que reprovou a tentativa anterior.
+
+## Como é esta refeição no Brasil
+
+${descreverPadrao([contexto.refeicao])}
+
+Prefira alimentos comuns e baratos, do dia a dia.
+
+## Formato da resposta
+
+Responda SOMENTE com um objeto json válido, sem texto antes ou depois e sem blocos de código markdown, exatamente nesta estrutura, com UMA refeição só:
+
+{
+  "refeicoes": [
+    { "nome": "${contexto.refeicao}", "alimentoIds": [3, 60, 407, 84] }
+  ]
+}`;
+    }
+
+    private montarUserReparo(contexto: ContextoReparo): string {
+        const { resultado, alimentos, restricoesAlimentares, refeicao } = contexto;
+        const meta = resultado.dieta.refeicoes.find((r) => r.nome === refeicao);
+
+        return `# Usuário
+
+Objetivo: ${this.descreverObjetivo(resultado.meta.objetivo)}
+Restrições alimentares declaradas: ${restricoesAlimentares.length > 0 ? restricoesAlimentares.join(", ") : "nenhuma"}
+
+# Refeição a refazer
+
+${refeicao}${meta ? `: refeição de aproximadamente ${meta.kcal} kcal` : ""}
+
+O tamanho indica o peso dela no dia: escolha alimentos à altura. NÃO calcule porções.
+
+# Alimentos disponíveis
+
+Formato: id|nome|kcal|proteína|carboidrato|gordura — todos por 100 g.
+Os números servem para você julgar se o alimento cabe na refeição; não são para calcular nada.
+
+${alimentos.map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`).join("\n")}
+
+# Por que a tentativa anterior foi recusada
+
+A refeição que você montou ficou ${contexto.motivo}, e por isso é impossível
+encaixá-la na meta dela.
+
+${contexto.instrucao}
+
+Monte "${refeicao}" de novo em json.`;
     }
 
     /**

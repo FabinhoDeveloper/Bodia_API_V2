@@ -477,7 +477,7 @@ A primeira versão fechava um macro por vez, em sequência, e estava errada: um 
 Duas consequências no resto do código:
 
 - O `dieta-selecao.prompt` passou a **exigir uma fonte de gordura** nas refeições principais. Com a gordura travada em 25% das calorias e nenhum alimento denso no prato, só sobrava volume para fechar a energia — foi metade do problema das 400 g.
-- `DietaIaGenerator.exigirCobertura` **recusa** almoço ou jantar sem base de carboidrato ou sem fonte de proteína: a meta seria inalcançável por construção, e o problema é da SELEÇÃO, que precisa ser refeita.
+- `DietaIaGenerator.conferir` **recusa** almoço ou jantar sem base de carboidrato ou sem fonte de proteína: a meta seria inalcançável por construção, e o problema é da SELEÇÃO, que precisa ser refeita. Recusar hoje significa **pedir aquela refeição de novo** — ver "O retry da SELEÇÃO" abaixo.
 
 `plan.service.gerar()` orquestra tudo e imprime três blocos no console: o plano calculado, a conferência dos macros e o plano enviado ao app. O plano volta na resposta HTTP e **só é persistido quando o usuário aprova**, num segundo POST (`/api/cadastro`, `user.service`).
 
@@ -532,7 +532,18 @@ Descreve o que compõe cada refeição no Brasil (café: pão, ovo, fruta, café
 
 As chaves precisam continuar batendo com `DISTRIBUICAO_REFEICOES` (`engine.service`) e `HORARIO_POR_REFEICAO` (`plano.mapper`).
 
-### O retry: viu que errou, pede de novo
+### Dois retries, dois problemas diferentes
+
+O gerador erra de duas maneiras, e cada uma tem o seu laço:
+
+| O que deu errado | Quem detecta | Laço |
+|---|---|---|
+| O plano fechou fora da tolerância de macros ou de volume | `ValidadorMacros`, `ValidadorVolume` | **do plano**, em `PlanoIaGenerator.gerar` — 3 tentativas |
+| Uma refeição saiu impossível de montar (sem proteína, sem base de carboidrato, sem alimento nenhum) | `DietaIaGenerator.conferir` | **da refeição**, em `DietaIaGenerator.reparar` — 2 reparos |
+
+O segundo é mais novo, e por um tempo não existiu: as conferências de cobertura eram `throw`, e um almoço sem fonte de proteína — erro de UMA refeição, que o modelo conserta quando avisado — derrubava a geração inteira com um 500, mesmo com o laço do plano de pé logo acima. O comentário de `exigirCobertura` já dizia o certo (*"o problema é da SELEÇÃO, e é ela que precisa ser refeita"*); faltava alguém refazê-la.
+
+### O retry do PLANO: viu que errou, pede de novo
 
 Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **3 tentativas** (uma mais duas).
 
@@ -546,12 +557,30 @@ O desvio é medido **por refeição** (`ValidadorMacros.validarRefeicao`), e nã
 
 Esgotadas as tentativas, devolve a **melhor** (menor soma dos desvios absolutos, com peso extra por sessão de treino fora do orçamento). Nunca deixa o usuário sem plano; o desvio residual segue na conferência, que é o que o RF22 pede. `ConferenciaDTO.tentativas` sobe até o app de propósito — é o que permite medir a frequência do retry sem ler log de servidor.
 
+Uma trilha que **lança** também gasta uma tentativa, em vez de matar a geração: as duas rodam em `Promise.allSettled`, e resposta vazia, JSON quebrado ou timeout do modelo passaram a valer uma volta a mais. Antes, uma única falha transitória derrubava a requisição inteira com as duas outras tentativas intactas. Só quando TODAS falham — a IA fora do ar, credencial inválida — não há plano a entregar, e o erro sobe até virar 500, como deve.
+
+### O retry da SELEÇÃO: a refeição impossível é pedida de novo
+
+`DietaIaGenerator` confere cada refeição antes de ela virar gramas, e a que não passa é **pedida de novo ao modelo, sozinha** (`prompts/dieta-selecao.prompt.ts#montarReparo`, etapa `dieta:reparo:<refeição>` no log).
+
+- **Só a refeição culpada é refeita**, e não o dia: as outras já estavam boas, e outra rodada completa gastaria uma resposta grande para arriscar estragá-las.
+- **As defeituosas de uma rodada vão em `Promise.all`** — são independentes, e o custo da rodada é o de UMA chamada, não o de uma por refeição. É isso que faz o reparo caber no orçamento do RNF02.
+- **Dois reparos, não três** como no laço de fora: o pedido aqui é bem mais estreito ("este almoço não tem proteína, refaça só ele") e, se o modelo não atende na segunda, o problema é do catálogo filtrado, não da instrução.
+- **A chamada de reparo que falha é engolida**: devolve a seleção original e o defeito continua pendente. Quem já tinha um prato imperfeito não pode acabar sem prato nenhum por causa da tentativa de consertá-lo.
+- **Esgotados os reparos, a refeição imperfeita é ENTREGUE**, com o motivo em `ConferenciaDTO.avisos` ("Almoço: sem nenhuma fonte de proteína"). É a mesma política do `PorcoesSolver` para meta inalcançável — prato comestível com desvio honesto vale mais que usuário sem plano —, e o desvio que ela causa ainda passa pelo `ValidadorMacros`.
+
+**Id fora do catálogo é descartado, não lançado.** A fronteira de segurança do `CatalogoFilter` fica exatamente onde estava — o alimento proibido segue sem entrar —, e o que resta passa pela conferência: se o descarte quebrou a cobertura, o pedido de reparo nasce ali.
+
+**JSON quebrado continua sendo exceção**, ao contrário das conferências por refeição: ele não diz qual refeição consertar, então não há pedido estreito a fazer. Quem trata é o laço do plano.
+
+As frases de instrução **não** são compartilhadas com `ajuste-selecao.ts` de propósito: lá o macro está fora da faixa e a instrução é de ajuste fino ("um carboidrato mais denso além do que já escolheu"); aqui o papel está ausente e a instrução é de inclusão. Unificá-las produziria uma frase que não serve bem a nenhum dos dois.
+
 ### O número final nunca é aceito na palavra do modelo
 
 A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 
-1. **IDs na seleção**: todo `alimentoId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos.
-2. **Cobertura da refeição**: almoço e jantar precisam de uma base de carboidrato e de uma fonte de proteína. Sem elas a meta é inalcançável por construção.
+1. **IDs na seleção**: todo `alimentoId` precisa existir no catálogo *filtrado*. Id inexistente é alucinação; e, como o catálogo já passou pelo filtro, isso também barra um item proibido entrando pela porta dos fundos. O id de fora é **descartado**, e não motivo de exceção: a barreira fica exatamente onde estava e a refeição continua recuperável.
+2. **Cobertura da refeição**: almoço e jantar precisam de uma base de carboidrato e de uma fonte de proteína. Sem elas a meta é inalcançável por construção. Falhou? A refeição é **pedida de novo** — os dois itens alimentam o retry da seleção, em vez de abortar a geração.
 3. **Nome do catálogo**: o `nome` gravado vem do catálogo, não do que a IA escreveu — o app nunca exibe um nome que não corresponde ao id.
 4. **Gramas**: não são mais validadas porque não são mais pedidas ao modelo. O `porcoes.solver` só devolve ids que recebeu, sempre dentro da faixa de `data/porcoes.ts`.
 5. **IDs do treino**: mesma regra do catálogo filtrado.
@@ -560,7 +589,7 @@ A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 
 8. **O desvio chega ao app**: `conferencia.mapper` traduz a saída dos dois validadores no formato da tela, e o `POST /api/onboarding` a devolve junto do plano (RF22). Medir sem mostrar não fechava o requisito — até então os dois validadores rodavam e o resultado ia apenas para o `console.log` do servidor.
 
-Corrigir automaticamente quando o desvio estoura ainda **não** existe — esta etapa MEDE e REPORTA. E o desvio, medido, **está estourando**: ver "Próximos passos".
+O desvio medido não é só reportado: ele realimenta o prompt e o plano é refeito — as duas seções de retry acima. O que sobra depois das tentativas continua sendo MEDIDO e REPORTADO, nunca escondido.
 
 ### `ai.service.ts` e a configuração
 
@@ -640,7 +669,7 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
 | `GET` | `/` | → **200** `{ message, commit, iniciadoEm }`. Marca da versão no ar: `commit` vem de `GIT_COMMIT` (exportada pelo `deploy.sh`) e `iniciadoEm` é o boot do processo. É o `curl` que confirma **qual** versão o deploy publicou. | — |
-| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano, conferencia }`. Nada é persistido — é o plano que o usuário revisa antes de decidir. `conferencia` traz o desvio medido pelos dois validadores (RF22). `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
+| `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano, conferencia }`. Nada é persistido — é o plano que o usuário revisa antes de decidir. `conferencia` traz o desvio medido pelos dois validadores (RF22) e, em `avisos`, as refeições que o gerador não conseguiu consertar. `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
 | `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ token, usuario }`. Grava usuário, peso, restrições e as duas fichas numa transação, e **já devolve a sessão aberta**. `conta.aceiteTermos` precisa ser `true` (RF36). | **400** payload inválido ou sem aceite; **409** e-mail já cadastrado |
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ token, usuario }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
 | `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve o tempo de cada trilha e a validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |

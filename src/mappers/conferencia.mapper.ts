@@ -24,7 +24,7 @@ export default class ConferenciaMapper {
         { chave: "gordura", nome: "Gordura", unidade: "g" },
     ];
 
-    montar({ validacao, validacaoVolume, tentativas }: PlanoValidado): ConferenciaDTO {
+    montar({ validacao, validacaoVolume, tentativas, avisos }: PlanoValidado): ConferenciaDTO {
         return {
             // Os DOIS precisam passar: um plano com a dieta certa e o treino com
             // metade do volume prescrito não está conferido.
@@ -45,6 +45,10 @@ export default class ConferenciaMapper {
             // tentativa nenhuma; para a tela, ter sido gerado uma vez é a
             // leitura certa.
             tentativas: tentativas ?? 1,
+            // O fixture não tem defeito a relatar, e o gerador só preenche o
+            // campo quando algo sobrou — o `?? []` mantém o contrato com o app
+            // estável (a chave existe sempre), como já se faz com `tentativas`.
+            avisos: avisos ?? [],
         };
     }
 

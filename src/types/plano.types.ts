@@ -114,6 +114,17 @@ export interface PlanoValidado {
      */
     tentativas?: number;
     /**
+     * O que o gerador não conseguiu consertar, uma linha por refeição — vazio no
+     * caso normal.
+     *
+     * Existe porque a seleção defeituosa deixou de abortar a geração: uma
+     * refeição que o modelo não soube montar nem depois dos reparos é ENTREGUE,
+     * e o problema precisa viajar junto dela em vez de sumir. É a mesma política
+     * do `PorcoesSolver` para meta inalcançável — o desvio é reportado, não
+     * escondido.
+     */
+    avisos?: string[];
+    /**
      * Conferência do volume de treino. Existe pela mesma razão que `validacao`:
      * o número que a IA devolveu nunca é aceito na palavra dela. Até então a
      * dieta tinha validador e o treino não tinha nenhum.
@@ -194,8 +205,10 @@ export interface PlanoDTO {
  * validadores recalculavam tudo corretamente e o resultado ia só para o
  * `console.log` do servidor — ninguém do lado do usuário via.
  *
- * A correção automática por reenvio ao modelo, com o desvio realimentado no
- * prompt, continua fora: esta etapa MEDE e REPORTA, não corrige.
+ * A correção automática por reenvio ao modelo existe — os dois laços de retry,
+ * o do plano e o da refeição. O que chega aqui é o que sobrou DEPOIS deles: o
+ * desvio residual em `macros`/`volume` e, em `avisos`, a refeição que nem o
+ * reparo resolveu.
  */
 export interface ConferenciaDTO {
     /** Os dois validadores dentro do limite. */
@@ -225,6 +238,16 @@ export interface ConferenciaDTO {
      * medição que decide o que fazer com o RNF02 (geração em até 15 s).
      */
     tentativas: number;
+    /**
+     * As refeições que ficaram defeituosas depois de esgotados os reparos —
+     * "Almoço: sem nenhuma fonte de proteína". Vazio no caso normal.
+     *
+     * Sobe até o app pela mesma razão que o desvio dos macros (RF22): antes
+     * disso, um almoço sem proteína virava um 500 e o usuário não recebia plano
+     * nenhum. Agora ele recebe o plano E o motivo da imperfeição, e é ele quem
+     * decide se aceita.
+     */
+    avisos: string[];
 }
 
 /** O que o POST /api/onboarding devolve. */

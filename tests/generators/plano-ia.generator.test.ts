@@ -64,6 +64,11 @@ function aiServiceFake(respostas: Partial<Record<string, unknown | string>>) {
         const resposta = respostas[etapa];
 
         if (resposta === undefined) throw new Error(`etapa inesperada no teste: ${etapa}`);
+        // Uma etapa mapeada para uma função é CHAMADA: é assim que se simula uma
+        // trilha que falha só nas primeiras vezes, sem confundir a falha da
+        // chamada com uma resposta inválida.
+        if (typeof resposta === "function") return (resposta as () => Promise<string>)();
+
         return typeof resposta === "string" ? resposta : JSON.stringify(resposta);
     });
 
@@ -183,53 +188,139 @@ describe("PlanoIaGenerator", () => {
         expect(plano.dieta.refeicoes[0].itens[0].nome).toBe("Arroz, tipo 1, cozido");
     });
 
+    /**
+     * A seleção inválida deixou de abortar a geração: cada refeição recusada é
+     * PEDIDA DE NOVO ao modelo, e o que não for consertado é entregue com aviso.
+     * O detalhe do laço de reparo é coberto em dieta-ia.generator.test.ts; aqui
+     * o que se confere é o que chega ao topo.
+     */
     describe("chamada 1 — seleção", () => {
-        it("rejeita alimento que não existe no catálogo (alucinação de id)", async () => {
+        it("descarta id que não existe no catálogo em vez de derrubar a geração", async () => {
             const selecao = selecaoValida();
-            selecao.refeicoes[0].alimentoIds = [999999];
+            selecao.refeicoes[0].alimentoIds = [999999, ARROZ, FRANGO];
 
-            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /alimento fora do catálogo permitido/,
+            const { planoIaGenerator } = criarGerador(
+                { ...RESPOSTAS_OK, "dieta:seleção": selecao },
+                { macros: true, volume: true },
             );
+
+            const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+            const ids = plano.dieta.refeicoes[0].itens.map((i) => i.alimentoId);
+
+            expect(ids).toEqual([ARROZ, FRANGO]);
         });
 
         // O catálogo filtrado é a fronteira de segurança: um alimento proibido
-        // não pode entrar nem que o modelo cite o id correto dele.
-        it("rejeita alimento proibido pela restrição, mesmo com id real", async () => {
+        // não pode entrar nem que o modelo cite o id correto dele. Descartar o
+        // id mantém essa barreira exatamente onde estava — o que mudou é que a
+        // refeição vira pedido de reparo em vez de exceção.
+        it("nunca deixa entrar alimento proibido pela restrição, mesmo com id real", async () => {
             const { planoIaGenerator } = criarGerador(RESPOSTAS_OK);
 
-            await expect(
-                planoIaGenerator.gerar(
-                    { restricoesAlimentares: ["Vegano"], restricoesFisicas: [] },
-                    resultado,
-                ),
-            ).rejects.toThrow(/alimento fora do catálogo permitido/);
+            const { plano } = await planoIaGenerator.gerar(
+                { restricoesAlimentares: ["Vegano"], restricoesFisicas: [] },
+                resultado,
+            );
+
+            const ids = plano.dieta.refeicoes.flatMap((r) => r.itens.map((i) => i.alimentoId));
+
+            expect(ids.length).toBeGreaterThan(0);
+            expect(ids).not.toContain(FRANGO);
         });
 
-        it("rejeita seleção com refeição faltando", async () => {
+        it("pede a refeição de novo quando o almoço vem sem fonte de proteína", async () => {
+            const selecao = selecaoValida();
+            // 100 = Brócolis, cozido — vegetal, não cobre a proteína.
+            selecao.refeicoes[1].alimentoIds = [ARROZ, 100];
+
+            const { planoIaGenerator, aiService } = criarGerador(
+                {
+                    ...RESPOSTAS_OK,
+                    "dieta:seleção": selecao,
+                    "dieta:reparo:Almoço": {
+                        refeicoes: [{ nome: "Almoço", alimentoIds: [ARROZ, FRANGO] }],
+                    },
+                },
+                { macros: true, volume: true },
+            );
+
+            const { plano, avisos } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(etapasDe(aiService)).toContain("dieta:reparo:Almoço");
+            expect(plano.dieta.refeicoes[1].itens.map((i) => i.alimentoId)).toContain(FRANGO);
+            expect(avisos).toEqual([]);
+        });
+
+        // A regressão que motivou o trabalho: antes disto, um almoço que o
+        // modelo não soubesse montar virava 500 e o usuário não recebia plano
+        // nenhum. Agora recebe o plano E o motivo da imperfeição.
+        it("entrega o plano com aviso quando o reparo não resolve", async () => {
+            const selecao = selecaoValida();
+            selecao.refeicoes[1].alimentoIds = [ARROZ, 100];
+
+            const { planoIaGenerator } = criarGerador(
+                {
+                    ...RESPOSTAS_OK,
+                    "dieta:seleção": selecao,
+                    // Insiste no mesmo erro em todos os reparos.
+                    "dieta:reparo:Almoço": {
+                        refeicoes: [{ nome: "Almoço", alimentoIds: [ARROZ, 100] }],
+                    },
+                },
+                { macros: true, volume: true },
+            );
+
+            const { plano, avisos } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(plano.dieta.refeicoes).toHaveLength(4);
+            expect(avisos).toEqual(["Almoço: sem nenhuma fonte de proteína"]);
+        });
+
+        it("trata almoço sem base de carboidrato do mesmo jeito", async () => {
+            const selecao = selecaoValida();
+            selecao.refeicoes[1].alimentoIds = [FRANGO, 100];
+
+            const { planoIaGenerator } = criarGerador(
+                {
+                    ...RESPOSTAS_OK,
+                    "dieta:seleção": selecao,
+                    "dieta:reparo:Almoço": {
+                        refeicoes: [{ nome: "Almoço", alimentoIds: [FRANGO, 100] }],
+                    },
+                },
+                { macros: true, volume: true },
+            );
+
+            const { avisos } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(avisos).toEqual(["Almoço: sem nenhuma base de carboidrato"]);
+        });
+
+        it("remonta do zero a refeição que a IA não devolveu", async () => {
             const selecao = selecaoValida();
             selecao.refeicoes = selecao.refeicoes.slice(1);
 
-            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /não escolheu alimentos para a refeição "Café da manhã"/,
+            const { planoIaGenerator } = criarGerador(
+                {
+                    ...RESPOSTAS_OK,
+                    "dieta:seleção": selecao,
+                    "dieta:reparo:Café da manhã": {
+                        refeicoes: [{ nome: "Café da manhã", alimentoIds: [ARROZ, FRANGO] }],
+                    },
+                },
+                { macros: true, volume: true },
             );
+
+            const { plano, avisos } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(plano.dieta.refeicoes[0].nome).toBe("Café da manhã");
+            expect(plano.dieta.refeicoes[0].itens).toHaveLength(2);
+            expect(avisos).toEqual([]);
         });
 
-        it("rejeita refeição sem alimento nenhum", async () => {
-            const selecao = selecaoValida();
-            selecao.refeicoes[1].alimentoIds = [];
-
-            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /não escolheu alimentos para a refeição "Almoço"/,
-            );
-        });
-
+        // JSON quebrado continua sendo exceção: não diz qual refeição consertar,
+        // então não há pedido estreito a fazer. Quem trata é o laço de fora, que
+        // gasta as três tentativas antes de desistir.
         it("falha com mensagem própria quando a seleção não é json", async () => {
             const { planoIaGenerator } = criarGerador({
                 ...RESPOSTAS_OK,
@@ -238,32 +329,6 @@ describe("PlanoIaGenerator", () => {
 
             await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
                 "A IA retornou um JSON inválido na seleção de alimentos",
-            );
-        });
-
-        // Sem base de carboidrato ou sem proteína, a meta de um almoço é
-        // inalcançável por construção e o solver entregaria o prato possível com
-        // um desvio enorme. Falhar é mais honesto: o problema é da SELEÇÃO.
-        it("rejeita almoço sem base de carboidrato", async () => {
-            const selecao = selecaoValida();
-            // 100 = Brócolis, cozido — vegetal, não é base.
-            selecao.refeicoes[1].alimentoIds = [FRANGO, 100];
-
-            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /montou "Almoço" sem nenhuma base de carboidrato/,
-            );
-        });
-
-        it("rejeita almoço sem fonte de proteína", async () => {
-            const selecao = selecaoValida();
-            selecao.refeicoes[1].alimentoIds = [ARROZ, 100];
-
-            const { planoIaGenerator } = criarGerador({ ...RESPOSTAS_OK, "dieta:seleção": selecao });
-
-            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
-                /montou "Almoço" sem nenhuma fonte de proteína/,
             );
         });
 
@@ -421,6 +486,50 @@ describe("PlanoIaGenerator", () => {
             expect(validacao.dentroDoLimite).toBe(false);
         });
 
+        /**
+         * Uma trilha que LANÇA gasta uma tentativa, em vez de matar a geração.
+         * É o que cobre resposta vazia, JSON quebrado e timeout do modelo: até
+         * então uma única falha transitória derrubava a requisição inteira,
+         * mesmo com duas tentativas sobrando no laço.
+         */
+        it("gasta uma tentativa quando uma trilha falha, e tenta de novo", async () => {
+            let chamadas = 0;
+
+            const { planoIaGenerator, aiService } = criarGerador(
+                {
+                    ...RESPOSTAS_OK,
+                    "dieta:seleção": () => {
+                        chamadas++;
+                        return chamadas === 1
+                            ? Promise.reject(new Error("timeout do modelo"))
+                            : Promise.resolve(JSON.stringify(selecaoValida()));
+                    },
+                },
+                { macros: true, volume: true },
+            );
+
+            const { plano, tentativas } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(plano.dieta.refeicoes).toHaveLength(4);
+            expect(tentativas).toBe(2);
+            // O treino da tentativa 1 é reaproveitado: só a trilha culpada é
+            // refeita, e ela é a única a ser chamada duas vezes.
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(1);
+        });
+
+        // Sem candidato nenhum não há plano a entregar, e o erro segue subindo
+        // até virar 500 — como deve.
+        it("relança quando todas as tentativas falham", async () => {
+            const { planoIaGenerator, aiService } = criarGerador({
+                ...RESPOSTAS_OK,
+                "dieta:seleção": () => Promise.reject(new Error("IA fora do ar")),
+            });
+
+            await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
+                "IA fora do ar",
+            );
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
+        });
     });
 
     describe("chamada 3 — treino", () => {

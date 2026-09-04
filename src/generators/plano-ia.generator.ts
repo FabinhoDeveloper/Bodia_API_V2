@@ -1,9 +1,9 @@
 import { ResultadoBenchmarkGeracao } from "../types/benchmark.types";
 import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
 import CatalogoFilter from "../prompts/catalogo.filter";
-import { PlanoGerado, PlanoValidado, Refeicao, SessaoTreino } from "../types/plano.types";
+import { PlanoGerado, PlanoValidado, SessaoTreino } from "../types/plano.types";
 import AjusteSelecao from "./ajuste-selecao";
-import DietaIaGenerator from "./dieta-ia.generator";
+import DietaIaGenerator, { DietaGerada } from "./dieta-ia.generator";
 import TreinoIaGenerator from "./treino-ia.generator";
 import ValidadorMacros from "./validador-macros";
 import ValidadorVolume from "./validador-volume";
@@ -101,8 +101,9 @@ export default class PlanoIaGenerator {
 
         let melhor: PlanoValidado | null = null;
         let tentativasFeitas = 0;
-        let refeicoes: Refeicao[] | undefined;
+        let dieta: DietaGerada | undefined;
         let treino: Treino | undefined;
+        let ultimoErro: unknown;
 
         for (let tentativa = 1; tentativa <= PlanoIaGenerator.MAX_TENTATIVAS; tentativa++) {
             const inicio = performance.now();
@@ -117,27 +118,58 @@ export default class PlanoIaGenerator {
                   )
                 : undefined;
 
-            const pedidoDieta: Promise<Refeicao[]> =
-                refeicoes === undefined
+            const pedidoDieta: Promise<DietaGerada> =
+                dieta === undefined
                     ? this.dietaGenerator.gerar(
                           resultado,
                           alimentos,
                           perfil.restricoesAlimentares,
                           ajuste,
                       )
-                    : Promise.resolve(refeicoes);
+                    : Promise.resolve(dieta);
 
             const pedidoTreino: Promise<Treino> =
                 treino === undefined
                     ? this.treinoGenerator.gerar(resultado, exercicios, perfil.restricoesFisicas)
                     : Promise.resolve(treino);
 
-            [refeicoes, treino] = await Promise.all([pedidoDieta, pedidoTreino]);
+            // allSettled, e não all, pela mesma razão de `gerarComMetricas`: com
+            // `all`, a rejeição de uma trilha retorna enquanto a promise da
+            // outra continua viva, e a falha dela vira unhandled rejection.
+            //
+            // E, principalmente: uma trilha que LANÇA agora gasta uma tentativa
+            // em vez de matar a geração. É o que cobre JSON inválido, resposta
+            // vazia e timeout do modelo — até então uma única falha transitória
+            // derrubava a requisição inteira mesmo havendo duas tentativas
+            // sobrando no laço.
+            const [respostaDieta, respostaTreino] = await Promise.allSettled([
+                pedidoDieta,
+                pedidoTreino,
+            ]);
+
+            if (respostaDieta.status === "fulfilled") dieta = respostaDieta.value;
+            if (respostaTreino.status === "fulfilled") treino = respostaTreino.value;
+
+            if (respostaDieta.status === "rejected" || respostaTreino.status === "rejected") {
+                ultimoErro =
+                    respostaDieta.status === "rejected"
+                        ? respostaDieta.reason
+                        : (respostaTreino as PromiseRejectedResult).reason;
+
+                tentativasFeitas = tentativa;
+
+                console.log(
+                    `[geração] tentativa ${tentativa}/${PlanoIaGenerator.MAX_TENTATIVAS} falhou: ` +
+                        `${ultimoErro instanceof Error ? ultimoErro.message : String(ultimoErro)}`,
+                );
+
+                continue;
+            }
 
             const plano: PlanoGerado = {
-                dieta: { refeicoes },
-                treino: { sessoes: treino.sessoes },
-                observacoes: treino.observacoes,
+                dieta: { refeicoes: dieta!.refeicoes },
+                treino: { sessoes: treino!.sessoes },
+                observacoes: treino!.observacoes,
             };
 
             // Os ids já foram conferidos dentro de cada gerador, contra um
@@ -145,7 +177,12 @@ export default class PlanoIaGenerator {
             // no caso da dieta). O que falta é a aritmética.
             const validacao = this.validadorMacros.validar(plano, alimentos, resultado);
             const validacaoVolume = this.validadorVolume.validar(plano, exercicios, resultado);
-            const candidato: PlanoValidado = { plano, validacao, validacaoVolume };
+            const candidato: PlanoValidado = {
+                plano,
+                validacao,
+                validacaoVolume,
+                avisos: dieta!.avisos,
+            };
             tentativasFeitas = tentativa;
 
             console.log(
@@ -162,17 +199,23 @@ export default class PlanoIaGenerator {
             if (validacao.dentroDoLimite && validacaoVolume.dentroDoLimite) break;
 
             // Descarta só a trilha culpada, para a próxima volta refazê-la.
-            if (!validacao.dentroDoLimite) refeicoes = undefined;
+            if (!validacao.dentroDoLimite) dieta = undefined;
             if (!validacaoVolume.dentroDoLimite) treino = undefined;
         }
 
-        // O laço roda pelo menos uma vez, então `melhor` está preenchido — o
-        // não-nulo é para o compilador, que não sabe disso.
-        //
+        // Só chega aqui sem candidato nenhum se TODAS as tentativas lançaram —
+        // a IA fora do ar, credencial inválida, timeout em todas. Aí não há
+        // plano a entregar e o erro segue subindo até virar 500, como deve.
+        if (!melhor) {
+            throw ultimoErro instanceof Error
+                ? ultimoErro
+                : new Error(`Não foi possível gerar o plano: ${String(ultimoErro)}`);
+        }
+
         // `tentativas` é quantas foram FEITAS, e não a que venceu: o que este
         // número mede é o custo em chamadas e em tempo, que é o que decide o
         // RNF02. A melhor tentativa pode muito bem ter sido a primeira.
-        return { ...melhor!, tentativas: tentativasFeitas };
+        return { ...melhor, tentativas: tentativasFeitas };
     }
 
     /**
@@ -259,7 +302,7 @@ export default class PlanoIaGenerator {
         }
 
         const plano: PlanoGerado = {
-            dieta: { refeicoes: dieta.value.valor },
+            dieta: { refeicoes: dieta.value.valor.refeicoes },
             treino: { sessoes: treino.value.valor.sessoes },
             observacoes: treino.value.valor.observacoes,
         };
