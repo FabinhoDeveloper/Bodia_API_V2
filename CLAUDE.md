@@ -349,6 +349,20 @@ cat ~/.ssh/bodia_ci     # → SSH_PRIVATE_KEY
 ssh-keyscan -t ed25519 <host> | awk '{print $2, $3}'   # → SSH_HOST_KEY
 ```
 
+### O processo pode estar servindo build velho
+
+`npm start` é `node dist/server.js` — ele **não** recompila. Quem desenvolve com `npm run dev` (tsx watch) recarrega o fonte a cada save; quem sobe com `npm start` continua servindo o último `npm run build`, e nada acusa.
+
+Isso já custou uma hora: o app apontava para a máquina local, o código novo estava no fonte com a suíte passando, e o processo no ar era um `dist` de duas semanas antes. O `GET /` respondia 200 e dizia `commit: "desconhecido"`, porque `GIT_COMMIT` só existe depois de um deploy — a marca de versão era cega justamente em dev, que é onde se testa mudança.
+
+Por isso a raiz devolve também `origem` (`dist` ou `src`) e `compiladoEm` (mtime do arquivo em execução). Antes de concluir que uma mudança "não funcionou", confira:
+
+```bash
+curl -s localhost:3333/ | jq '{origem, compiladoEm}'
+```
+
+`origem: "dist"` com `compiladoEm` anterior à sua última alteração significa que o servidor não tem o seu código — `npm run build` e reinicie, ou use `npm run dev`.
+
 ### Cuidados conhecidos
 
 - **O `tsc` roda na EC2 e consome memória.** Numa instância de 1 GB (`t2.micro`/`t3.micro`) o build pode ser morto pelo OOM killer — a pista é o job travar ou sair com `Killed`. Correção feita uma vez na máquina: 2 GB de swap (`fallocate` → `mkswap` → `swapon` → entrada no `/etc/fstab`).
@@ -668,7 +682,7 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 
 | Método | Rota | Corpo / Resposta | Erros |
 |---|---|---|---|
-| `GET` | `/` | → **200** `{ message, commit, iniciadoEm }`. Marca da versão no ar: `commit` vem de `GIT_COMMIT` (exportada pelo `deploy.sh`) e `iniciadoEm` é o boot do processo. É o `curl` que confirma **qual** versão o deploy publicou. | — |
+| `GET` | `/` | → **200** `{ message, commit, origem, compiladoEm, iniciadoEm }`. Marca da versão no ar: `commit` vem de `GIT_COMMIT` (exportada pelo `deploy.sh`) e `iniciadoEm` é o boot do processo. É o `curl` que confirma **qual** versão o deploy publicou. `origem` (`dist`/`src`) e `compiladoEm` cobrem o **dev**, onde `commit` é sempre `"desconhecido"` — ver "O processo pode estar servindo build velho". | — |
 | `POST` | `/api/onboarding` | `{ conta, perfil }` → **200** `{ plano, conferencia }`. Nada é persistido — é o plano que o usuário revisa antes de decidir. `conferencia` traz o desvio medido pelos dois validadores (RF22) e, em `avisos`, as refeições que o gerador não conseguiu consertar. `perfil.numeroRefeicoes` (3–6) é obrigatório. | **400** perfil ausente ou inválido; **500** se a IA falhar |
 | `POST` | `/api/cadastro` | `{ conta, perfil, plano }` → **201** `{ token, usuario }`. Grava usuário, peso, restrições e as duas fichas numa transação, e **já devolve a sessão aberta**. `conta.aceiteTermos` precisa ser `true` (RF36). | **400** payload inválido ou sem aceite; **409** e-mail já cadastrado |
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ token, usuario }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |

@@ -3,7 +3,7 @@ import express from "express";
 import helmet from "helmet";
 
 import { limiteGeral } from "./config/seguranca";
-import { commit, iniciadoEm } from "./config/versao";
+import { commit, compiladoEm, iniciadoEm, origem } from "./config/versao";
 import errorHandler from "./middlewares/error-handler";
 import notFoundHandler from "./middlewares/not-found-handler";
 import routes from "./routes";
@@ -28,8 +28,12 @@ app.use(limiteGeral);
 // Alem de dizer que a API responde, a raiz diz QUAL versao esta respondendo:
 // depois de um deploy, `commit` tem que bater com o commit publicado. Sem isso
 // um `curl /` que volta 200 nao distingue deploy novo de processo antigo no ar.
+//
+// `origem` e `compiladoEm` cobrem o caso de DEV, em que `commit` e sempre
+// "desconhecido": rodando de `dist` com um `compiladoEm` anterior a ultima
+// alteracao no fonte, o processo esta servindo build velho. Ver config/versao.
 app.get("/", (_req, res) => {
-    res.json({ message: "BodIA API no ar", commit, iniciadoEm });
+    res.json({ message: "BodIA API no ar", commit, origem, compiladoEm, iniciadoEm });
 });
 
 app.use("/api", routes);
