@@ -568,7 +568,7 @@ Cada um dos três prompts aplica as mesmas técnicas, com o conteúdo que lhe di
 
 As de macros (ISSN/Jäger, Stokes, Kerksick, Mifflin) viviam no `dieta-quantidades.prompt` e saíram junto com ele: o modelo não recebe mais meta numérica de macro nenhuma, então não sobrou número para ele tentar melhorar. Elas continuam citadas onde o número de fato nasce — `engine.service` e `data/limites-seguranca.ts`.
 
-`treino.prompt.ts` tem limites explícitos de volume (4–7 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
+`treino.prompt.ts` tem limites explícitos de volume (4–8 exercícios por sessão, 2–5 séries por exercício) porque **em teste real o modelo leu "18 séries por grupo na semana" como "18 séries deste exercício"** e montou sessões de 15 exercícios. Ao mexer no prompt, não remova esses limites.
 
 ### `padrao-refeicoes.ts` — o padrão brasileiro é instrução, não filtro
 
