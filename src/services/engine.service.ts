@@ -134,6 +134,56 @@ export default class EngineService {
         ],
     };
 
+    // Onde a PROTEÍNA do dia fica. Tabela separada da de calorias, e é preciso
+    // que sejam duas: a caloria se reparte pelo tamanho da refeição, a proteína
+    // pela comida que aquela refeição de fato tem.
+    //
+    // Repartir a proteína proporcionalmente à caloria dava ao café da manhã 20%
+    // da proteína do dia, que pão com fruta não entrega, e sobrava caloria para
+    // o almoço cobrir com carboidrato — o carboidrato é o resíduo. Medido: o
+    // prato brasileiro convencional (arroz, feijão, carne, salada, azeite),
+    // escalado para bater a caloria do almoço, tem ~70% MAIS proteína e ~30%
+    // MENOS carboidrato que a meta que saía daqui. O solver obedecia à meta, e
+    // o resultado era 250 g de arroz com 80 g de frango.
+    //
+    // TENSÃO COM A LITERATURA, e ela é deliberada. A ISSN (Jäger et al., 2017)
+    // recomenda 0,25 g/kg ou 20-40 g por refeição "distribuídos uniformemente,
+    // a cada 3-4 h", e Mamerow et al. (2014) mediram síntese proteica 24 h 25%
+    // maior com distribuição uniforme contra concentrada no jantar. Mas isso é
+    // um PISO POR REFEIÇÃO, não uma divisão igual de um total fixo: aplicada
+    // como divisão igual, a uniforme foi testada aqui e é a PIOR das opções —
+    // o almoço cai para 19 g de proteína e o desvio chega a +85%, porque um
+    // prato brasileiro real entrega muito mais que isso.
+    //
+    // O que estas linhas fazem é concentrar nas principais respeitando o piso
+    // da ISSN em café, almoço e jantar até onde o total diário permite. Com
+    // 1,7 g/kg e 5 refeições ele fica perto de 20 g, não acima — subir a dose
+    // diária é a porta que resolveria isso, e está registrada nos próximos
+    // passos do CLAUDE.md.
+    //
+    // Como DISTRIBUICAO_REFEICOES, é parâmetro de engenharia: a fundamentação
+    // teórica não fixa repartição por refeição. Cada linha soma 100% e os nomes
+    // precisam bater com os de lá.
+    private static readonly DISTRIBUICAO_PROTEINA: Record<number, Record<string, number>> = {
+        3: { "Café da manhã": 0.2, Almoço: 0.42, Jantar: 0.38 },
+        4: { "Café da manhã": 0.18, Almoço: 0.4, "Lanche da tarde": 0.1, Jantar: 0.32 },
+        5: {
+            "Café da manhã": 0.18,
+            "Lanche da manhã": 0.06,
+            Almoço: 0.4,
+            "Lanche da tarde": 0.06,
+            Jantar: 0.3,
+        },
+        6: {
+            "Café da manhã": 0.16,
+            "Lanche da manhã": 0.06,
+            Almoço: 0.38,
+            "Lanche da tarde": 0.06,
+            Jantar: 0.28,
+            Ceia: 0.06,
+        },
+    };
+
     // dose-resposta citada (Pelland et al., 2024) sem número fechado - faixas 8-12/12-16/16-20, usando o meio
     private static readonly SERIES_POR_GRUPO_SEMANA: Record<NivelExperiencia, number> = {
         iniciante: 10,
@@ -444,6 +494,11 @@ export default class EngineService {
      * Reparte a meta diária entre as refeições. A última refeição recebe o que
      * sobrou em vez do seu percentual: assim a soma das partes fecha exatamente
      * o total do dia, sem o centavo perdido no arredondamento de cada fatia.
+     *
+     * Caloria e gordura saem de DISTRIBUICAO_REFEICOES; a proteína sai de
+     * DISTRIBUICAO_PROTEINA, que reparte por refeição e não pelo tamanho dela.
+     * O CARBOIDRATO é o resíduo da refeição — mesma conta que já governa o
+     * carboidrato do dia em `calcularMacros`, aplicada uma vez por prato.
      */
     private calcularDieta(
         perfil: PerfilInput,
@@ -452,6 +507,7 @@ export default class EngineService {
     ): ResultadoCalculo["dieta"] {
         const numeroRefeicoes = perfil.numeroRefeicoes;
         const distribuicao = EngineService.DISTRIBUICAO_REFEICOES[numeroRefeicoes];
+        const porProteina = EngineService.DISTRIBUICAO_PROTEINA[numeroRefeicoes];
 
         const restante = {
             kcal: meta.caloriasAlvo,
@@ -463,12 +519,25 @@ export default class EngineService {
         const refeicoes = distribuicao.map(([nome, fatia], indice) => {
             const ultima = indice === distribuicao.length - 1;
 
+            const kcal = ultima ? restante.kcal : Math.round(meta.caloriasAlvo * fatia);
+            const proteina = ultima
+                ? restante.proteina
+                : Math.round(macros.proteina.g * porProteina[nome]);
+            const gordura = ultima ? restante.gordura : Math.round(macros.gordura.g * fatia);
+
             const porcao = {
                 nome,
-                kcal: ultima ? restante.kcal : Math.round(meta.caloriasAlvo * fatia),
-                proteina: ultima ? restante.proteina : Math.round(macros.proteina.g * fatia),
-                carboidrato: ultima ? restante.carboidrato : Math.round(macros.carboidrato.g * fatia),
-                gordura: ultima ? restante.gordura : Math.round(macros.gordura.g * fatia),
+                kcal,
+                proteina,
+                // O resíduo, nunca negativo: uma combinação extrema de perfil e
+                // número de refeições poderia fazer proteína e gordura sozinhas
+                // passarem da caloria da refeição, e gravar carboidrato negativo
+                // quebraria o solver e a tela. Zerar deixa a sobra para as
+                // outras refeições, e o desvio aparece na conferência.
+                carboidrato: ultima
+                    ? Math.max(0, restante.carboidrato)
+                    : Math.max(0, Math.round((kcal - proteina * 4 - gordura * 9) / 4)),
+                gordura,
             };
 
             restante.kcal -= porcao.kcal;

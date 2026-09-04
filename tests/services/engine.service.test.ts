@@ -571,3 +571,86 @@ describe("EngineService", () => {
         });
     });
 });
+
+/**
+ * A proteína é repartida por uma tabela PRÓPRIA, e não pela fatia calórica da
+ * refeição. Repartir proporcionalmente dava ao café da manhã 20% da proteína do
+ * dia, que pão com fruta não entrega, e a sobra de caloria virava carboidrato no
+ * almoço — era o que empurrava o arroz ao teto de 250 g com 80 g de carne.
+ */
+describe("EngineService — repartição da proteína entre as refeições", () => {
+    const engineService = new EngineService();
+
+    const perfil = (numeroRefeicoes: number, overrides = {}) =>
+        perfilBase({
+            sexo: "F",
+            dataNascimento: dataNascimentoParaIdade(25),
+            peso: 57,
+            altura: 165,
+            percentualGordura: null,
+            nivelAtividade: "moderado",
+            nivelExperiencia: "iniciante",
+            objetivo: "manter",
+            diasPorSemana: 4,
+            numeroRefeicoes,
+            ...overrides,
+        });
+
+    type Macro = "kcal" | "proteina" | "carboidrato" | "gordura";
+    const soma = (refeicoes: Record<Macro, number>[], macro: Macro) =>
+        refeicoes.reduce((total, r) => total + r[macro], 0);
+
+    // Sem isso a soma das partes deixaria de ser o total do dia, e a conferência
+    // acusaria um desvio que não é do plano, é da repartição.
+    it.each([3, 4, 5, 6])(
+        "com %i refeições, as partes somam exatamente o total do dia",
+        (numeroRefeicoes) => {
+            const r = engineService.calcular(perfil(numeroRefeicoes));
+
+            expect(soma(r.dieta.refeicoes, "kcal")).toBe(r.meta.caloriasAlvo);
+            expect(soma(r.dieta.refeicoes, "proteina")).toBe(r.macros.proteina.g);
+            expect(soma(r.dieta.refeicoes, "carboidrato")).toBe(r.macros.carboidrato.g);
+            expect(soma(r.dieta.refeicoes, "gordura")).toBe(r.macros.gordura.g);
+        },
+    );
+
+    it.each([3, 4, 5, 6])(
+        "com %i refeições, o almoço leva mais proteína que a fatia calórica dele",
+        (numeroRefeicoes) => {
+            const r = engineService.calcular(perfil(numeroRefeicoes));
+            const almoco = r.dieta.refeicoes.find((m) => m.nome === "Almoço")!;
+
+            const fatiaProteina = almoco.proteina / r.macros.proteina.g;
+            const fatiaCaloria = almoco.kcal / r.meta.caloriasAlvo;
+
+            expect(fatiaProteina).toBeGreaterThan(fatiaCaloria);
+        },
+    );
+
+    it("dá às refeições principais mais proteína que aos lanches", () => {
+        const r = engineService.calcular(perfil(5));
+        const proteinaDe = (nome: string) =>
+            r.dieta.refeicoes.find((m) => m.nome === nome)!.proteina;
+
+        for (const principal of ["Café da manhã", "Almoço", "Jantar"]) {
+            for (const lanche of ["Lanche da manhã", "Lanche da tarde"]) {
+                expect(proteinaDe(principal)).toBeGreaterThan(proteinaDe(lanche));
+            }
+        }
+    });
+
+    // Proteína e gordura sozinhas passando da caloria da refeição gravaria
+    // carboidrato negativo, que quebraria o solver e a tela.
+    it.each([3, 4, 5, 6])(
+        "nunca prescreve carboidrato negativo, nem em déficit (%i refeições)",
+        (numeroRefeicoes) => {
+            const r = engineService.calcular(
+                perfil(numeroRefeicoes, { objetivo: "perder", percentualGordura: 20 }),
+            );
+
+            for (const refeicao of r.dieta.refeicoes) {
+                expect(refeicao.carboidrato).toBeGreaterThanOrEqual(0);
+            }
+        },
+    );
+});
