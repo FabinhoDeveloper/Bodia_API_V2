@@ -2,6 +2,7 @@ import EngineService from "../../src/services/engine.service";
 import CatalogoFilter from "../../src/prompts/catalogo.filter";
 import AiService from "../../src/services/ai.service";
 import DietaIaGenerator from "../../src/generators/dieta-ia.generator";
+import AjusteSelecao from "../../src/generators/ajuste-selecao";
 import PlanoIaGenerator from "../../src/generators/plano-ia.generator";
 import PorcoesSolver from "../../src/generators/porcoes.solver";
 import TreinoIaGenerator from "../../src/generators/treino-ia.generator";
@@ -69,18 +70,66 @@ function aiServiceFake(respostas: Partial<Record<string, unknown | string>>) {
     return { gerarJson } as unknown as AiService & { gerarJson: jest.Mock };
 }
 
-function criarGerador(respostas: Partial<Record<string, unknown | string>>) {
+/**
+ * Validadores que aprovam ou reprovam sob comando.
+ *
+ * Fazer o plano REALMENTE fechar as metas num teste exigiria montar uma seleção
+ * que o solver consiga encaixar nos quatro alvos — o que testaria o solver, não
+ * o laço de retry. Aqui o que importa é o gerador reagir ao veredito.
+ */
+function validadorMacrosFake(dentroDoLimite: boolean) {
+    const real = new ValidadorMacros();
+
+    return {
+        validar: (...args: Parameters<ValidadorMacros["validar"]>) => ({
+            ...real.validar(...args),
+            dentroDoLimite,
+        }),
+        validarRefeicao: real.validarRefeicao.bind(real),
+    } as unknown as ValidadorMacros;
+}
+
+function validadorVolumeFake(dentroDoLimite: boolean) {
+    const real = new ValidadorVolume();
+
+    return {
+        validar: (...args: Parameters<ValidadorVolume["validar"]>) => ({
+            ...real.validar(...args),
+            dentroDoLimite,
+        }),
+    } as unknown as ValidadorVolume;
+}
+
+function criarGerador(
+    respostas: Partial<Record<string, unknown | string>>,
+    veredito: { macros?: boolean; volume?: boolean } = {},
+) {
     const aiService = aiServiceFake(respostas);
+
+    const validadorMacros =
+        veredito.macros === undefined
+            ? new ValidadorMacros()
+            : validadorMacrosFake(veredito.macros);
+    const validadorVolume =
+        veredito.volume === undefined
+            ? new ValidadorVolume()
+            : validadorVolumeFake(veredito.volume);
 
     const planoIaGenerator = new PlanoIaGenerator(
         new CatalogoFilter(),
         new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
-        new ValidadorMacros(),
-        new ValidadorVolume(),
+        validadorMacros,
+        validadorVolume,
+        new AjusteSelecao(new ValidadorMacros()),
     );
 
     return { planoIaGenerator, aiService };
+}
+
+/** Só as etapas, na ordem em que a IA foi chamada. */
+function etapasDe(aiService: { gerarJson: jest.Mock }) {
+    return aiService.gerarJson.mock.calls.map((c) => c[2] as string);
 }
 
 const RESPOSTAS_OK = {
@@ -94,14 +143,15 @@ describe("PlanoIaGenerator", () => {
     // DUAS chamadas, não três: as gramas deixaram de ser pedidas ao modelo e
     // passaram a ser resolvidas pelo PorcoesSolver.
     it("monta o plano a partir das duas chamadas", async () => {
-        const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK);
+        const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+            macros: true,
+            volume: true,
+        });
 
         const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
         expect(aiService.gerarJson).toHaveBeenCalledTimes(2);
-        expect(aiService.gerarJson.mock.calls.map((c) => c[2])).toEqual(
-            expect.arrayContaining(["dieta:seleção", "treino"]),
-        );
+        expect(etapasDe(aiService)).toEqual(expect.arrayContaining(["dieta:seleção", "treino"]));
         expect(plano.dieta.refeicoes).toHaveLength(4);
         expect(plano.treino.sessoes[0].nome).toBe("Upper");
         expect(plano.observacoes).toBe("Beba água.");
@@ -280,6 +330,97 @@ describe("PlanoIaGenerator", () => {
 
             expect(primeira.plano.dieta.refeicoes).toEqual(segunda.plano.dieta.refeicoes);
         });
+    });
+
+    /**
+     * O laço de retry. Até então o desvio era medido, reportado e ignorado: o
+     * plano ia para o banco fora da tolerância.
+     */
+    describe("retry quando os validadores acusam", () => {
+        it("não repete quando o plano fecha de primeira", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+                macros: true,
+                volume: true,
+            });
+
+            const { tentativas } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(tentativas).toBe(1);
+            expect(aiService.gerarJson).toHaveBeenCalledTimes(2);
+        });
+
+        // O teto existe porque nem todo desvio é culpa da seleção: se a meta da
+        // refeição não couber em porções realistas, insistir só queima crédito.
+        it("para no teto de tentativas quando nunca fecha", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+                macros: false,
+                volume: false,
+            });
+
+            const { tentativas } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(tentativas).toBe(3);
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(3);
+        });
+
+        // Refazer as duas trilhas gastaria uma chamada à toa e ainda arriscaria
+        // estragar a que já estava boa.
+        it("refaz só o treino quando apenas o volume falha", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+                macros: true,
+                volume: false,
+            });
+
+            await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(1);
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(3);
+        });
+
+        it("refaz só a dieta quando apenas os macros falham", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+                macros: false,
+                volume: true,
+            });
+
+            await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(1);
+        });
+
+        // Repetir o mesmo prompt daria a mesma resposta. O que muda a segunda
+        // tentativa é o desvio medido voltando para dentro dela.
+        it("realimenta o desvio no prompt da tentativa seguinte", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
+                macros: false,
+                volume: true,
+            });
+
+            await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            const selecoes = aiService.gerarJson.mock.calls.filter((c) => c[2] === "dieta:seleção");
+
+            expect(selecoes[0][1]).not.toContain("Tentativa anterior");
+            expect(selecoes[1][1]).toContain("Tentativa anterior");
+            expect(selecoes[1][1]).toContain("Almoço");
+        });
+
+        // Nunca deixa o usuário sem plano: o desvio residual segue na
+        // conferência, que é o que o RF22 pede.
+        it("devolve um plano mesmo esgotadas as tentativas", async () => {
+            const { planoIaGenerator } = criarGerador(RESPOSTAS_OK, {
+                macros: false,
+                volume: false,
+            });
+
+            const { plano, validacao } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            expect(plano.dieta.refeicoes).toHaveLength(4);
+            expect(validacao.dentroDoLimite).toBe(false);
+        });
+
     });
 
     describe("chamada 3 — treino", () => {

@@ -58,12 +58,22 @@ export default class DietaIaGenerator {
         this.porcoesSolver = porcoesSolver;
     }
 
+    /**
+     * `ajuste` é o retorno da tentativa anterior, quando houve uma: as refeições
+     * que não fecharam e o que fazer com elas. Vazio na primeira.
+     */
     async gerar(
         resultado: ResultadoCalculo,
         alimentos: Alimento[],
         restricoesAlimentares: string[],
+        ajuste?: string[],
     ): Promise<Refeicao[]> {
-        const selecionadas = await this.selecionar(resultado, alimentos, restricoesAlimentares);
+        const selecionadas = await this.selecionar(
+            resultado,
+            alimentos,
+            restricoesAlimentares,
+            ajuste,
+        );
 
         return this.quantificar(resultado, selecionadas);
     }
@@ -73,11 +83,13 @@ export default class DietaIaGenerator {
         resultado: ResultadoCalculo,
         alimentos: Alimento[],
         restricoesAlimentares: string[],
+        ajuste?: string[],
     ): Promise<RefeicaoSelecionada[]> {
         const { system, user } = this.selecaoPrompt.montar({
             resultado,
             alimentos,
             restricoesAlimentares,
+            ajuste,
         });
 
         const resposta = await this.aiService.gerarJson(system, user, "dieta:seleção");

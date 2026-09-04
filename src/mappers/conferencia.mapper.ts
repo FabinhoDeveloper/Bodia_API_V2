@@ -24,7 +24,7 @@ export default class ConferenciaMapper {
         { chave: "gordura", nome: "Gordura", unidade: "g" },
     ];
 
-    montar({ validacao, validacaoVolume }: PlanoValidado): ConferenciaDTO {
+    montar({ validacao, validacaoVolume, tentativas }: PlanoValidado): ConferenciaDTO {
         return {
             // Os DOIS precisam passar: um plano com a dieta certa e o treino com
             // metade do volume prescrito não está conferido.
@@ -41,6 +41,10 @@ export default class ConferenciaMapper {
                 dentroDoLimite: validacaoVolume.dentroDoLimite,
                 sessoesForaDoOrcamento: this.sessoesForaDoOrcamento(validacaoVolume),
             },
+            // O fixture (SIMULAR_IA) não passa pelo laço de retry e não conta
+            // tentativa nenhuma; para a tela, ter sido gerado uma vez é a
+            // leitura certa.
+            tentativas: tentativas ?? 1,
         };
     }
 

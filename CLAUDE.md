@@ -217,6 +217,7 @@ backend/
       validador-macros.ts     # confere kcal/macros contra a TACO
       validador-volume.ts     # confere séries por grupo contra o orçamento
       porcoes.solver.ts       # as gramas de cada refeição, sem IA
+      ajuste-selecao.ts       # o desvio medido, em linguagem de escolha de alimento
     mappers/
       plano.mapper.ts         # plano cru -> PlanoDTO (escrita)
       meu-plano.mapper.ts     # banco -> MeuPlano (leitura)
@@ -402,6 +403,30 @@ As constantes são **exportadas**, e não números soltos dentro da função que
 
 A quantidade é do usuário, a repartição é da tabela — **nenhuma das duas é decisão do LLM**, que recebe kcal e os três macros já prontos por refeição. A última refeição do dia recebe o *restante* em vez do seu percentual, para a soma das partes fechar exatamente o total do dia sem o centavo perdido no arredondamento de cada fatia.
 
+### A proteína tem tabela própria
+
+Caloria e gordura seguem a tabela acima. **Proteína não**: ela tem `DISTRIBUICAO_PROTEINA`, e o **carboidrato passou a ser o resíduo de cada refeição** (`kcal − proteína×4 − gordura×9`, ÷4) — a mesma conta que já governava o carboidrato do dia, aplicada uma vez por prato.
+
+| Refeições | Proteína |
+|---|---|
+| 3 | Café 20% · Almoço 42% · Jantar 38% |
+| 4 | Café 18% · Almoço 40% · Lanche tarde 10% · Jantar 32% |
+| 5 | Café 18% · Lanche manhã 6% · Almoço 40% · Lanche tarde 6% · Jantar 30% |
+| 6 | Café 16% · Lanche manhã 6% · Almoço 38% · Lanche tarde 6% · Jantar 28% · Ceia 6% |
+
+São duas tabelas porque a caloria se reparte pelo TAMANHO da refeição e a proteína pela COMIDA que ela de fato tem. Repartir proporcionalmente dava ao café da manhã 20% da proteína do dia, que pão com fruta não entrega, e a caloria que sobrava virava carboidrato no almoço. Medido: o prato brasileiro convencional (arroz, feijão, carne, salada, azeite), escalado para bater a caloria do almoço, tem **~70% mais proteína e ~30% menos carboidrato** que a meta que saía daqui — e o resultado na tela era **250 g de arroz com 80 g de frango**, 3,13:1 numa mulher de 57 kg.
+
+**Tensão com a literatura, e ela é deliberada.** A ISSN (Jäger et al., 2017) recomenda 0,25 g/kg ou 20–40 g por refeição *"distribuídos uniformemente, a cada 3–4 h"*, e Mamerow et al. (2014) mediram síntese proteica 24 h **25% maior** com distribuição uniforme contra concentrada no jantar. Mas isso é um **piso por refeição**, não uma divisão igual de um total fixo. Aplicada como divisão igual, a uniforme foi testada aqui e é a **pior** das opções: o almoço cai para 19 g de proteína, o frango vai ao piso de 80 g e o desvio de proteína chega a **+85%**, porque um prato brasileiro real entrega muito mais que isso.
+
+Efeito medido da tabela nova, com o mesmo prato clássico:
+
+| perfil | antes | depois |
+|---|---|---|
+| mulher 57 kg, manutenção | 3,13:1 · C −7% | **3,00:1 · os 4 alvos dentro dos 5%** |
+| homem 85 kg, manutenção | 2,50:1 · C −15% | **2,08:1 · C −11%** |
+
+O prato de prescrição de verdade (~1,5:1) exigiria proteína a **2,0 g/kg** — topo da faixa 1,4–2,0 de Stokes et al. 2018, que já é a fonte de `PROTEINA_G_POR_KG`. Medido, ele fecha os quatro alvos nos dois perfis. A dose ficou em 1,7 por decisão de produto; a porta está nos próximos passos.
+
 Os nomes precisam continuar batendo com `HORARIO_POR_REFEICAO` (`mappers/plano.mapper.ts`), que é quem casa o horário sugerido, e com `DISTRIBUICAO_TEXT` na tela `OnboardingRefeicoesScreen` do mobile, que mostra os percentuais ao usuário.
 
 ## Geração do plano pela IA
@@ -507,6 +532,20 @@ Descreve o que compõe cada refeição no Brasil (café: pão, ovo, fruta, café
 
 As chaves precisam continuar batendo com `DISTRIBUICAO_REFEICOES` (`engine.service`) e `HORARIO_POR_REFEICAO` (`plano.mapper`).
 
+### O retry: viu que errou, pede de novo
+
+Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **3 tentativas** (uma mais duas).
+
+O que é regerado é a **SELEÇÃO**, não as porções. Com o `PorcoesSolver` as gramas já são as melhores possíveis para os alimentos escolhidos: o que sobrou de desvio é responsabilidade de QUAIS alimentos entraram, e é a única alavanca que outra chamada pode mover. Pedir as gramas de novo não teria o que melhorar.
+
+**Só a trilha que falhou é refeita** — macros fora pedem outra dieta, volume fora pede outro treino. Refazer as duas gastaria uma chamada à toa e ainda arriscaria estragar a que já estava boa. É essa decisão que faz o retry caber no orçamento de tempo (ver "Latência").
+
+O retorno vai no prompt em **linguagem de comida, não de aritmética** (`generators/ajuste-selecao.ts`): *"Almoço: inclua um carboidrato mais denso — farofa, pão, macarrão ou batata"*, e não "o almoço ficou 18% abaixo no carboidrato". É a mesma razão pela qual o prompt de seleção proíbe o modelo de calcular. Uma instrução por refeição, a do macro **mais** fora: mandar corrigir os quatro de uma vez dá ordens que se contradizem, e o modelo escolhe qual seguir.
+
+O desvio é medido **por refeição** (`ValidadorMacros.validarRefeicao`), e não pelo dia: o total do dia diz que algo está errado, não onde — e o modelo monta uma refeição por vez.
+
+Esgotadas as tentativas, devolve a **melhor** (menor soma dos desvios absolutos, com peso extra por sessão de treino fora do orçamento). Nunca deixa o usuário sem plano; o desvio residual segue na conferência, que é o que o RF22 pede. `ConferenciaDTO.tentativas` sobe até o app de propósito — é o que permite medir a frequência do retry sem ler log de servidor.
+
 ### O número final nunca é aceito na palavra do modelo
 
 A validação acontece em camadas, e cada uma é mais estreita que a anterior:
@@ -565,13 +604,24 @@ A chamada única na DeepSeek levava **~2 minutos** e era o motivo de `SIMULAR_IA
 | `gpt-4o-mini` | **6,6 s** | 6,6 s | 6,2 s |
 | `gpt-5` | **22,5 s** | 9,2 s | 22,5 s |
 
-O RNF02 pede 15 s: **`gpt-4o-mini` atende, `gpt-5` não**.
+O RNF02 pede 15 s, e essa medição é **de antes do solver e do retry**: ali a geração eram três chamadas, com as quantidades em sequência depois da seleção. Com duas chamadas e o retry medido abaixo, o `gpt-5` passou a caber nos 15 s.
 
-**A escolha atual é `gpt-5`, deliberada** — não é `.env` esquecido. A consequência é que o RNF02 fica em não conformidade conhecida: ou o requisito é revisado no documento para o tempo medido, ou o modelo muda antes da entrega. Trocar é editar uma linha do `.env`; nada no código depende do nome do modelo (ver `ehModeloDeRaciocinio()` em `config/ia.ts`, que ajusta os parâmetros sozinho).
+**A escolha atual é `gpt-5`, deliberada** — não é `.env` esquecido. Trocar é editar uma linha do `.env`; nada no código depende do nome do modelo (ver `ehModeloDeRaciocinio()` em `config/ia.ts`, que ajusta os parâmetros sozinho).
 
 Como ler: as trilhas rodam em **paralelo, como em produção**, então `total_ms` é o wall clock que o app veria — `max(dieta, treino)` — e é ele que decide se o modelo cabe. A soma das etapas é maior que o total de propósito: cada etapa responde *onde* o tempo é gasto, não *quanto* o usuário espera.
 
 O resultado contraria a intuição de que a seleção de alimentos seria o gargalo por ser o maior prompt (~17k caracteres): ela é a etapa **mais rápida** (2–3,6 s). Quem domina é o treino, e no `gpt-5` por causa dos tokens de raciocínio. Se o `gpt-5` for necessário por qualidade, é o `treino.prompt` que precisa encolher.
+
+**O retry cabe no orçamento, e isso foi medido.** Com o laço de 3 tentativas, dois perfis reais em `gpt-5`, ambos esgotando as três:
+
+| perfil | total | tentativa 1 | tentativas 2 e 3 |
+|---|---|---|---|
+| mulher 57 kg | **11,5 s** | 6,5 s | 2,4 s · 2,6 s |
+| homem 85 kg | **9,5 s** | 5,5 s | 2,1 s · 2,0 s |
+
+Os dois ficaram **dentro dos 15 s do RNF02 mesmo no pior caso**, e o motivo é a decisão de refazer só a trilha culpada: o volume passou nas duas, então as tentativas 2 e 3 custaram apenas a chamada de seleção (~2,5 s) em vez de uma geração inteira. Refazer as duas trilhas teria custado ~6 s por volta e estourado o requisito.
+
+Com o solver e o retry, o `gpt-5` passou a caber no RNF02 — a tabela acima, de antes deles, media a geração única e não vale mais como veredito do modelo.
 
 Para reproduzir sem mexer no `.env` (o `dotenv` não sobrescreve variável já definida no shell):
 
@@ -687,17 +737,11 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 
 ## Próximos passos
 
-- **O carboidrato ainda fica abaixo da meta, e a causa é o motor, não a IA.** Numa geração real com `gpt-5` depois do solver, a proteína ficou em **+0,8%** e a caloria em **−5,9%** (eram +72% e +30%), mas o carboidrato veio **−13,8%**: com o arroz e o feijão já nos tetos de 250 g, os 398 g/dia do perfil medido não cabem em porções de comer. O carboidrato é o RESÍDUO das calorias depois de proteína e de uma gordura travada em `GORDURA_PERCENTUAL_KCAL = 0.25`, então subir a gordura para 30–35% (dentro da faixa 20–35% de Jäger et al. 2017) derrubaria o carboidrato de 398 para 362–326 g e tornaria a meta alcançável. É decisão de nutrição, não de código, e foi deixada em aberto de propósito.
-- **A concentração de 35% no almoço** (`DISTRIBUICAO_REFEICOES`) é o outro lado da mesma conta: 1014 kcal e 139 g de carboidrato numa refeição exigem um carboidrato denso no prato (farofa, pão, macarrão). Quando a seleção traz um, o solver fecha os quatro alvos dentro de 1%; quando não traz, para nos tetos.
+- **A proteína a 1,7 g/kg é o que ainda separa o prato de uma prescrição.** Com a tabela de repartição, o retry e o solver, uma geração real fecha caloria, carboidrato e gordura em torno de 1–7%, mas a proteína teima em **+9%** no perfil feminino: um prato brasileiro com uma porção normal de carne entrega mais proteína do que 1,7 g/kg reparte para o almoço. Medido, **2,0 g/kg** — topo da faixa 1,4–2,0 de Stokes et al. 2018, a mesma fonte já citada — fecha os quatro alvos nos dois perfis E leva a razão arroz:carne de 3,0:1 para 1,67:1. A dose ficou em 1,7 por decisão de produto; subir é uma linha em `PROTEINA_G_POR_KG`.
+- **A gordura travada em 25%** (`GORDURA_PERCENTUAL_KCAL`) é a outra metade da mesma conta: o carboidrato é o RESÍDUO, então 25% de gordura o mantém alto e o arroz no teto. Subir para 30% (faixa 20–35%, Jäger et al. 2017) derruba o carboidrato de 398 para 356 g/dia no perfil masculino. Também decisão de nutrição, também deixada em aberto.
+- **O retry esgota as três tentativas nos dois perfis medidos.** Isso diz que o desvio residual é da META, não da seleção — nenhuma escolha de alimento fecha o que as duas linhas acima mantêm aberto. Enquanto for assim, o retry está pagando ~5 s e duas chamadas por uma melhora pequena; se as metas forem corrigidas, ele deve passar a disparar raramente. Vale remedir `conferencia.tentativas` depois de qualquer mexida nelas.
 - **O fixture não passa pelo solver.** `SIMULAR_IA=true` devolve `data/plano-simulado.ts` com gramas fixas e quatro refeições, independentemente do perfil — limitação já documentada no próprio arquivo, mas que agora significa que o caminho padrão de desenvolvimento não exercita as porções.
-- **A escolha do modelo decide o RNF02** (geração em até 15 s). Medido em `scripts/bench-modelo.ts`, mesmo perfil, mesmos prompts:
-
-  | modelo | wall clock | RNF02 |
-  |---|---|---|
-  | `gpt-4o-mini` | **6,6 s** | atende |
-  | `gpt-5` | **22,5 s** | não atende |
-
-  O gargalo do `gpt-5` é a trilha do TREINO (22,5 s contra 9,2 s da dieta), por causa dos tokens de raciocínio. Se o `gpt-5` for necessário por qualidade, é o `treino.prompt` que precisa encolher — não a seleção de alimentos, que é o maior prompt mas a etapa mais rápida.
+- **Remedir o `bench-modelo.ts`.** A tabela dele (`gpt-4o-mini` 6,6 s, `gpt-5` 22,5 s) é de quando a geração eram três chamadas em sequência; medido agora com duas chamadas mais o retry, o `gpt-5` fecha em 9,5–11,5 s. O veredito "gpt-5 não atende o RNF02" **caiu**, mas o script ainda não foi rodado de novo para a comparação entre modelos ficar honesta. O gargalo continua sendo a trilha do TREINO, por causa dos tokens de raciocínio: se sobrar tempo a cortar, é o `treino.prompt` que precisa encolher — não a seleção de alimentos, que é o maior prompt mas a etapa mais rápida.
 - **O padrão brasileiro é instrução, não garantia.** Se voltar a aparecer merluza no café da manhã, ver `padrao-refeicoes.ts` — o conserto estrutural é o filtro por refeição.
 - **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
 - **Fundamentar as constantes sem citação**: `FRACAO_SECUNDARIO` (`data/volume-treino.ts`), `ML_POR_KG` (`data/hidratacao.ts`) e `KCAL_MIN_ABSOLUTO` (`data/limites-seguranca.ts`). Todas têm o aviso no próprio arquivo. Ver `Fontes_Volume_e_Descanso.md`.

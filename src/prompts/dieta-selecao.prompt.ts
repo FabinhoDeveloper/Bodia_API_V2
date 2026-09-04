@@ -7,6 +7,14 @@ export interface ContextoSelecao {
     resultado: ResultadoCalculo;
     alimentos: Alimento[];
     restricoesAlimentares: string[];
+    /**
+     * O que deu errado na tentativa anterior, uma linha por refeição, já em
+     * linguagem de escolha de alimento. Vazio ou ausente na primeira tentativa.
+     *
+     * Vai no fim do prompt do USUÁRIO, e não no system: é informação daquela
+     * geração específica, e o system descreve a tarefa, que não mudou.
+     */
+    ajuste?: string[];
 }
 
 /**
@@ -95,8 +103,30 @@ Formato: id|nome|kcal|proteína|carboidrato|gordura — todos por 100 g.
 Os números servem para você julgar se o alimento cabe na refeição; não são para calcular nada.
 
 ${alimentos.map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`).join("\n")}
-
+${this.montarAjuste(contexto.ajuste)}
 Escolha os alimentos de cada refeição em json.`;
+    }
+
+    /**
+     * O retorno da tentativa anterior.
+     *
+     * Fica no FIM do prompt, logo antes do pedido, porque é a instrução mais
+     * recente e a que precisa pesar mais na resposta — e porque o catálogo, que
+     * vem antes, é longo o bastante para enterrar qualquer coisa colocada no
+     * meio dele.
+     */
+    private montarAjuste(ajuste: string[] | undefined): string {
+        if (!ajuste?.length) return "";
+
+        return `
+# Tentativa anterior
+
+Você já montou este cardápio uma vez e ele não fechou as metas. As refeições
+abaixo precisam de outra escolha de alimentos — mantenha as demais como estavam
+em espírito, e continue respeitando todas as regras.
+
+${ajuste.join("\n")}
+`;
     }
 
     private descreverObjetivo(objetivo: string): string {

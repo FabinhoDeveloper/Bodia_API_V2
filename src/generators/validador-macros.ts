@@ -60,6 +60,54 @@ export default class ValidadorMacros {
         return { calorias, proteina, carboidrato, gordura, dentroDoLimite };
     }
 
+    /**
+     * O mesmo desvio, medido de UMA refeição contra a meta dela.
+     *
+     * Existe para o retry: quando o plano não fecha, o que o modelo precisa
+     * ouvir não é "o dia ficou 14% abaixo no carboidrato" — é qual REFEIÇÃO
+     * ficou, porque é uma refeição por vez que ele monta. O total do dia não
+     * diz onde mexer.
+     *
+     * Reusa `compararComMeta`, a mesma conta de `validar`. Uma segunda cópia
+     * dela divergiria da primeira na primeira correção — foi o que já aconteceu
+     * quando cada gerador tinha o seu validador.
+     */
+    validarRefeicao(
+        itens: { alimentoId: number; gramas: number }[],
+        alimentos: Alimento[],
+        meta: { kcal: number; proteina: number; carboidrato: number; gordura: number },
+    ): Validacao {
+        const porId = new Map(alimentos.map((a) => [a.id, a]));
+        const total = { kcal: 0, proteina: 0, carboidrato: 0, gordura: 0 };
+
+        for (const item of itens) {
+            const alimento = porId.get(item.alimentoId);
+            if (!alimento) continue;
+
+            const fator = item.gramas / 100;
+
+            total.kcal += alimento.kcal * fator;
+            total.proteina += alimento.proteina * fator;
+            total.carboidrato += alimento.carboidrato * fator;
+            total.gordura += alimento.gordura * fator;
+        }
+
+        const calorias = this.compararComMeta(meta.kcal, total.kcal);
+        const proteina = this.compararComMeta(meta.proteina, total.proteina);
+        const carboidrato = this.compararComMeta(meta.carboidrato, total.carboidrato);
+        const gordura = this.compararComMeta(meta.gordura, total.gordura);
+
+        return {
+            calorias,
+            proteina,
+            carboidrato,
+            gordura,
+            dentroDoLimite: [calorias, proteina, carboidrato, gordura].every(
+                (macro) => Math.abs(macro.desvioPercentual) <= DESVIO_ACEITAVEL_PERCENTUAL,
+            ),
+        };
+    }
+
     private compararComMeta(meta: number, obtido: number): DesvioMacro {
         const arredondado = Math.round(obtido * 10) / 10;
         const desvioPercentual = meta === 0 ? 0 : ((arredondado - meta) / meta) * 100;

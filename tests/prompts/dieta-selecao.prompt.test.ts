@@ -94,3 +94,55 @@ describe("DietaSelecaoPrompt", () => {
         expect(system).toMatch(/json/i);
     });
 });
+
+/**
+ * O retorno da tentativa anterior. Repetir o mesmo prompt daria a mesma
+ * resposta — o que muda a segunda tentativa é o desvio medido voltando para
+ * dentro dela.
+ */
+describe("DietaSelecaoPrompt — retorno da tentativa anterior", () => {
+    const prompt = new DietaSelecaoPrompt();
+    const resultado = new EngineService().calcular(PERFIL);
+
+    const contextoBase = () => ({
+        resultado,
+        alimentos: new CatalogoFilter().filtrarAlimentos([]),
+        restricoesAlimentares: [],
+    });
+
+    it("não fala em tentativa anterior na primeira geração", () => {
+        const { user } = prompt.montar(contextoBase());
+
+        expect(user).not.toContain("Tentativa anterior");
+    });
+
+    it("cita a refeição e a instrução quando há ajuste", () => {
+        const { user } = prompt.montar({
+            ...contextoBase(),
+            ajuste: ["- Almoço: Inclua um carboidrato mais denso."],
+        });
+
+        expect(user).toContain("# Tentativa anterior");
+        expect(user).toContain("Almoço");
+        expect(user).toContain("Inclua um carboidrato mais denso.");
+    });
+
+    // O catálogo é longo o bastante para enterrar qualquer instrução colocada
+    // antes dele; a mais recente precisa ser a última coisa que o modelo lê.
+    it("põe o ajuste depois do catálogo, junto do pedido", () => {
+        const { user } = prompt.montar({
+            ...contextoBase(),
+            ajuste: ["- Jantar: Inclua uma fonte de gordura."],
+        });
+
+        expect(user.indexOf("Tentativa anterior")).toBeGreaterThan(
+            user.indexOf("# Alimentos disponíveis"),
+        );
+    });
+
+    it("ignora ajuste vazio", () => {
+        const { user } = prompt.montar({ ...contextoBase(), ajuste: [] });
+
+        expect(user).not.toContain("Tentativa anterior");
+    });
+});

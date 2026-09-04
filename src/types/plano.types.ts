@@ -107,6 +107,13 @@ export interface PlanoValidado {
     plano: PlanoGerado;
     validacao: Validacao;
     /**
+     * Quantas vezes o plano foi gerado — 1 quando fechou de primeira. É o
+     * número de tentativas FEITAS, não a que venceu: o que ele mede é o custo
+     * em chamadas e em tempo. Existe para MEDIR o retry, e é essa medição que
+     * decide o que fazer com o RNF02 (geração em até 15 s).
+     */
+    tentativas?: number;
+    /**
      * Conferência do volume de treino. Existe pela mesma razão que `validacao`:
      * o número que a IA devolveu nunca é aceito na palavra dela. Até então a
      * dieta tinha validador e o treino não tinha nenhum.
@@ -209,6 +216,15 @@ export interface ConferenciaDTO {
         /** Nomes das sessões cujo volume ficou fora do orçamento. */
         sessoesForaDoOrcamento: string[];
     };
+    /**
+     * Quantas vezes o plano foi gerado até chegar a este resultado — 1 quando
+     * fechou de primeira, até 3 quando o gerador precisou pedir de novo.
+     *
+     * Sobe até o app de propósito: é o que permite MEDIR com que frequência o
+     * retry dispara em uso real, sem depender de ler log de servidor. É essa
+     * medição que decide o que fazer com o RNF02 (geração em até 15 s).
+     */
+    tentativas: number;
 }
 
 /** O que o POST /api/onboarding devolve. */

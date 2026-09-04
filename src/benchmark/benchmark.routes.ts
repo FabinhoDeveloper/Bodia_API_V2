@@ -8,6 +8,7 @@ import CatalogoFilter from "../prompts/catalogo.filter";
 import AiService from "../services/ai.service";
 import DietaIaGenerator from "../generators/dieta-ia.generator";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
+import AjusteSelecao from "../generators/ajuste-selecao";
 import PorcoesSolver from "../generators/porcoes.solver";
 import TreinoIaGenerator from "../generators/treino-ia.generator";
 import ValidadorMacros from "../generators/validador-macros";
@@ -25,6 +26,10 @@ const router = Router();
 
 const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs, iaParametros);
 
+// Um ValidadorMacros só, compartilhado com o AjusteSelecao: o retorno que vai ao
+// modelo precisa sair da MESMA conta que reprova o plano.
+const validadorMacros = new ValidadorMacros();
+
 const benchmarkController = new BenchmarkController(
     new BenchmarkService(
         new EngineService(),
@@ -32,8 +37,9 @@ const benchmarkController = new BenchmarkController(
             new CatalogoFilter(),
             new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
             new TreinoIaGenerator(new TreinoPrompt(), aiService),
-            new ValidadorMacros(),
+            validadorMacros,
             new ValidadorVolume(),
+            new AjusteSelecao(validadorMacros),
         ),
         iaModel,
     ),

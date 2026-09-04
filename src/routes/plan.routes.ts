@@ -4,6 +4,7 @@ import { getIaClient, iaModel, iaParametros, iaTimeoutMs, simularIa } from "../c
 import prismaClient from "../config/prisma";
 import PlanController from "../controllers/plan.controller";
 import DietaIaGenerator from "../generators/dieta-ia.generator";
+import AjusteSelecao from "../generators/ajuste-selecao";
 import PlanoIaGenerator from "../generators/plano-ia.generator";
 import PorcoesSolver from "../generators/porcoes.solver";
 import PlanoSimuladoGenerator from "../generators/plano-simulado.generator";
@@ -38,12 +39,18 @@ function montarGeradorIa(): PlanoIaGenerator {
     // modelo, mesmos parâmetros. Duas instâncias poderiam divergir sem aviso.
     const aiService = new AiService(getIaClient, iaModel, iaTimeoutMs, iaParametros);
 
+    // Um ValidadorMacros só, compartilhado com o AjusteSelecao: o retorno que
+    // vai ao modelo precisa sair da MESMA conta que reprova o plano, senão o
+    // gerador corrigiria um desvio diferente do que o validador mede.
+    const validadorMacros = new ValidadorMacros();
+
     return new PlanoIaGenerator(
         new CatalogoFilter(),
         new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
         new TreinoIaGenerator(new TreinoPrompt(), aiService),
-        new ValidadorMacros(),
+        validadorMacros,
         new ValidadorVolume(),
+        new AjusteSelecao(validadorMacros),
     );
 }
 
