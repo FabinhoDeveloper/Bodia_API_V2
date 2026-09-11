@@ -1,3 +1,4 @@
+import { SENHA_MIN } from "../config/auth";
 import AutenticacaoError from "../errors/autenticacao.error";
 import ConflitoError from "../errors/conflito.error";
 import NaoEncontradoError from "../errors/nao-encontrado.error";
@@ -45,7 +46,6 @@ export default class UserService {
      * erro pior que aceitar um inválido, que só falha na hora de usar.
      */
     private static readonly EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    private static readonly SENHA_MIN = 8;
     private static readonly NOME_MIN = 2;
 
     /**
@@ -555,9 +555,9 @@ export default class UserService {
             throw new ValidationError("e-mail inválido");
         }
 
-        if (typeof conta.senha !== "string" || conta.senha.length < UserService.SENHA_MIN) {
+        if (typeof conta.senha !== "string" || conta.senha.length < SENHA_MIN) {
             throw new ValidationError(
-                `senha deve ter pelo menos ${UserService.SENHA_MIN} caracteres`,
+                `senha deve ter pelo menos ${SENHA_MIN} caracteres`,
             );
         }
 

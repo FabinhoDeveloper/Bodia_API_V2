@@ -15,6 +15,7 @@ Qualquer recurso novo **deve seguir exatamente o padrão de camadas abaixo** —
 - **cors**, **dotenv** — infraestrutura básica de app
 - **Jest** (`ts-jest`) — testes
 - **supertest** — testes de rota (`tests/app.smoke.test.ts`)
+- **nodemailer** — envio de e-mail por SMTP (hoje o do Gmail, com senha de app), usado pela redefinição de senha (`config/email.ts`)
 - **`openai` SDK** — hoje na **OpenAI**, modelo padrão `gpt-4o-mini` (`IA_MODEL`). O provider é configurável (`IA_BASE_URL`): DeepSeek e Gemini expõem endpoints compatíveis com Chat Completions, então o mesmo SDK serve os três
 
 ## Arquitetura em camadas
@@ -37,7 +38,8 @@ Existem porque tipo declarado junto da classe que o produz força dependência p
 |---|---|
 | `perfil.types.ts` | `PerfilInput`, `PerfilOnboardingInput`, `ContaInput`, `ResultadoCalculo` |
 | `plano.types.ts` | `PlanoGerado`, `PlanoDTO`, `MeuPlano`, `Validacao`, `GeradorDePlano`, os payloads das rotas |
-| `auth.types.ts` | `LoginInput`, `UsuarioAutenticado` |
+| `auth.types.ts` | `LoginInput`, `UsuarioAutenticado`, `SessaoIniciada`, os corpos de redefinição e troca de senha |
+| `email.types.ts` | `MensagemEmail` e a interface `EnviadorEmail` |
 | `registro.types.ts` | registros de refeição/hidratação/treino; só o treino ainda sem model no Prisma |
 | `benchmark.types.ts` | só do endpoint temporário — sai junto com ele |
 
@@ -69,7 +71,7 @@ Contém a regra de negócio. Recebe o(s) Repository(ies) e colaboradores que pre
 | Service | Domínio | Estado |
 |---|---|---|
 | `engine.service.ts` | motor determinístico: TMB, TDEE, meta calórica, macros, split | pronto |
-| `auth.service.ts` | login, hash de senha, emissão do token | pronto |
+| `auth.service.ts` | login, hash de senha, emissão do token, redefinição (RF03) e troca de senha | pronto |
 | `user.service.ts` | cadastro, perfil, peso + recálculo, exclusão de conta | pronto |
 | `plan.service.ts` | gerar, consultar, regenerar o plano | pronto |
 | `ai.service.ts` | comunicação com a IA: envia prompt, devolve resposta | pronto |
@@ -88,6 +90,8 @@ Só classe que é **ponto de entrada de um domínio**. O resto é colaborador e 
 | `mappers/` | tradução entre formato interno e contrato da API | `plano.mapper.ts` (escrita), `meu-plano.mapper.ts` (leitura), `perfil.mapper.ts` (string → enum) |
 | `prompts/` | construção dos prompts e o filtro que os alimenta | `dieta-selecao.prompt.ts`, `treino.prompt.ts`, `catalogo.filter.ts` |
 | `generators/` | quem monta o plano, atrás da interface `GeradorDePlano` | `plano-ia.generator.ts` (orquestra), `dieta-ia.generator.ts`, `treino-ia.generator.ts`, `plano-simulado.generator.ts`, `validador-macros.ts`, `validador-volume.ts` |
+| `emails/` | quem entrega o e-mail (atrás de `EnviadorEmail`) e quem monta o texto | `smtp.enviador.ts`, `console.enviador.ts` (SIMULAR_EMAIL), `redefinicao-senha.email.ts` |
+| `paginas/` | HTML servido fora de `/api` — hoje só a página que o link de redefinição abre | `redefinir-senha.pagina.ts` |
 | `benchmark/` | endpoint temporário, service + controller + rota juntos | `benchmark.*.ts` |
 
 A regra prática: **se a classe não é chamada direto por um controller, provavelmente é colaborador.** Criar um service novo só porque uma classe ficou grande recria o problema que essa organização resolveu — services que não eram domínio nenhum.
@@ -161,6 +165,7 @@ Sempre importe o singleton do Prisma em vez de criar um `PrismaClient` novo.
 - Erros: lançar na Service, nunca `try/catch` espalhado no controller — o `errorHandler` global (`src/middlewares/error-handler.ts`) captura. `ValidationError` → **400**, `AutenticacaoError` → **401**, `NaoEncontradoError` → **404**, `ConflitoError` → **409**; qualquer outro `Error` vira **500** genérico com o stack no log. Criar novas subclasses em `src/errors/` quando surgir outro status.
 - Variáveis de ambiente: `src/server.ts` carrega `dotenv/config`; nunca ler `process.env` fora de `server.ts`/`config/` — se um valor de config for necessário em outra camada, passar como parâmetro.
 - Clientes de serviços externos ficam em `src/config/<provider>.ts` e são injetados por construtor (`prisma.ts`). Quando o SDK valida credencial no construtor — caso do `openai` —, exportar uma **factory** (`getIaClient()`) em vez do cliente pronto: assim a falta da chave não derruba o servidor no boot, só falha a rota que usa aquele serviço.
+- **`config/email.ts` segue o mesmo raciocínio do `ia.ts` abaixo**: SMTP é protocolo, e o Gmail é só o `SMTP_HOST` do `.env`. Também é factory (`getTransportadorEmail()`) — sem credencial o servidor sobe e só o envio falha.
 - **`config/ia.ts` é exceção deliberada a essa regra de nome.** O projeto trocou de provider três vezes (DeepSeek → Gemini → OpenAI) em pouco tempo, então o provider virou valor de **configuração** (`IA_BASE_URL`, `IA_MODEL`), não identidade do código — trocar de novo é editar o `.env`. Não renomear para `openai.ts`: isso desfaz a portabilidade.
 - **Express 4 não encaminha rejeição de Promise para o `errorHandler`.** Handler que chama Service assíncrono precisa propagar na mão — `.then(...).catch(next)` (ver `plan.controller.ts`). Sem isso a requisição fica pendurada até dar timeout em vez de virar 500.
 
@@ -182,6 +187,8 @@ Convenção de teste: `describe` pelo nome da classe, `it`/`it.each` descrevendo
 
 Ele não toca no banco — as rotas que cobre ou não usam Prisma, ou falham na validação antes de chegar nele. Para as que precisam de banco, ele percorre o router do Express e confere que a rota continua **registrada**; a ausência de uma rota é detectável mesmo sem poder chamá-la.
 
+O middleware de autenticação consulta `senhaAlteradaEm` no banco a cada requisição; o smoke o neutraliza com um `jest.spyOn(UserRepository.prototype, "buscarSenhaAlteradaEm")` que devolve `null`. Sem o spy, toda rota autenticada do teste bateria num Postgres que o CI não tem.
+
 **Ao adicionar uma rota, acrescente-a à lista desse teste** — e, se ela for autenticada, ao `it.each` que confere o **401 sem token**. A rota que perde o middleware num refactor continua respondendo 200 em todo teste unitário; só ali o buraco aparece.
 
 ## Estrutura de pastas
@@ -194,15 +201,18 @@ backend/
     config/
       prisma.ts               # PrismaClient singleton
       ia.ts                   # cliente da IA (factory) + modelo + flag SIMULAR_IA
-      auth.ts                 # custo do bcrypt
+      auth.ts                 # custo do bcrypt, SENHA_MIN, validade do link de redefinição
+      email.ts                # SMTP (factory) + remetente + URL_PUBLICA + flag SIMULAR_EMAIL
+      jwt.ts                  # assina e lê o token de sessão (sub + iat)
+      seguranca.ts            # limites por IP (geral, autenticação, recuperação de senha)
       fuso.ts                 # recorte do dia no fuso do usuário (America/Sao_Paulo)
     types/                    # interfaces compartilhadas — nenhuma classe
       perfil.types.ts  plano.types.ts  auth.types.ts
-      registro.types.ts  benchmark.types.ts
+      registro.types.ts  benchmark.types.ts  email.types.ts
       express.d.ts            # req.usuarioId, preenchido pelo middleware
     services/                 # OITO, um por domínio
       engine.service.ts       # motor determinístico (puro)
-      auth.service.ts         # login + hash de senha
+      auth.service.ts         # login, hash, redefinição e troca de senha
       user.service.ts         # cadastro
       plan.service.ts         # gerar e consultar o plano
       ai.service.ts           # adaptador do provider de IA
@@ -233,6 +243,7 @@ backend/
     repositories/
       user.repository.ts      plan.repository.ts      peso.repository.ts
       hidratacao.repository.ts  refeicao.repository.ts  treino.repository.ts
+      redefinicao-senha.repository.ts  # links de redefinição (só o hash do token)
     controllers/
       auth.controller.ts      user.controller.ts      plan.controller.ts
       hidratacao.controller.ts  refeicao.controller.ts  treino.controller.ts
@@ -240,6 +251,9 @@ backend/
       auth.routes.ts  user.routes.ts  plan.routes.ts
       hidratacao.routes.ts  refeicao.routes.ts  treino.routes.ts
       index.ts                # agrega os routers, montado em /api
+      paginas.routes.ts       # HTML, montado na RAIZ (fora de /api)
+    emails/                   # entrega (SMTP/console) e texto dos e-mails
+    paginas/                  # redefinir-senha.pagina.ts — o formulário do link
     benchmark/                # endpoint TEMPORÁRIO, isolado
       benchmark.service.ts    benchmark.controller.ts   benchmark.routes.ts
     errors/
@@ -256,7 +270,7 @@ backend/
       plano-simulado.ts       # fixture usado quando SIMULAR_IA=true
     middlewares/
       error-handler.ts        not-found-handler.ts
-      autenticacao.ts         # exige o Bearer e injeta req.usuarioId
+      autenticacao.ts         # exige o Bearer, recusa token anterior à troca de senha, injeta req.usuarioId
     app.ts                    # cria o express app, registra middlewares/rotas
     server.ts                 # bootstrap: carrega .env e sobe o listener
   scripts/
@@ -720,7 +734,21 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 | `POST` | `/api/login` | `{ email, senha }` → **200** `{ token, usuario }` | **401** credencial inválida (mesma mensagem para e-mail inexistente e senha errada) |
 | `GET` | `/api/teste-geracao` | Benchmark **temporário**: chama a IA de verdade com perfil fictício fixo e devolve o tempo de cada trilha e a validação. Ignora `SIMULAR_IA` de propósito. | devolve `success: false` no corpo em vez de lançar |
 
-`/api/login` e `/api/cadastro` têm limite estreito de tentativas por IP — ver `config/seguranca.ts`.
+| `POST` | `/api/senha/esqueci` | `{ email }` → **202** `{ message }`, **sempre** — cadastrado ou não, para não virar oráculo de contas. O controller responde ANTES de o service terminar: esperando, o tempo de resposta denunciaria o e-mail cadastrado (grava token e fala com o SMTP). Envia o link `<URL_PUBLICA>/redefinir-senha#token=…`, válido por 30 min, uso único. Um novo pedido para a mesma conta em menos de 60 s é ignorado. | **429** limite por IP |
+| `POST` | `/api/senha/redefinir` | `{ token, novaSenha, confirmacao }` → **204**. Chamada pela página do link, não pelo app. | **400** link inválido, já usado ou expirado (mesma mensagem); senha curta ou confirmação diferente |
+| `GET` | `/redefinir-senha` | **Fora de `/api`.** A página HTML com o formulário; lê o token do fragmento e chama a rota acima. CSP própria com `form-action 'none'`. | — |
+
+`/api/login`, `/api/cadastro` e `/api/senha/redefinir` têm limite estreito de tentativas por IP; `/api/senha/esqueci` tem um limite próprio, que conta todo pedido — ver `config/seguranca.ts`.
+
+### Redefinição de senha (RF03)
+
+- **O link abre uma página do backend**, não o app: o app não tem deep link, e a página funciona em qualquer cliente de e-mail, no Expo Go e no APK. Em produção o nginx precisa encaminhar `/redefinir-senha` ao Node, não só `/api`.
+- **O token vai no fragmento (`#token=`)**, que o navegador não envia ao servidor — não fica no access log do nginx nem em Referer.
+- **O banco guarda só o SHA-256** do token (`TokenRedefinicaoSenha.tokenHash`). SHA-256 e não bcrypt: o token é 256 bits aleatórios, e o hash determinístico permite achá-lo pelo índice único.
+- **Usar o link apaga a linha**, na mesma transação que grava a senha (`RedefinicaoSenhaRepository.consumirERedefinir`). O `deleteMany` com `count === 1` é o que garante o uso único mesmo com dois cliques simultâneos. Pedir um link novo apaga os anteriores.
+- **Trocar ou redefinir a senha derruba as sessões**: `Usuario.senhaAlteradaEm` é gravado junto, e o middleware recusa todo token com `iat` anterior a ele (comparando em SEGUNDOS, a resolução do `iat`). A troca logada devolve um token novo, para o próprio aparelho seguir logado.
+- **`SIMULAR_EMAIL=true`** imprime o e-mail (com o link) no log em vez de enviar — só para dev. É `false` por padrão: como a rota responde 202 sempre, um padrão `true` em produção diria "enviamos" sem enviar nada.
+- **O envio é pelo SMTP do Gmail, não pelo Amazon SES** — decisão tomada por falta de domínio. O SES só verifica domínio com CNAMEs de DKIM, que o DuckDNS não aceita; restaria verificar o endereço @gmail.com, e aí o e-mail sai sem a assinatura do Gmail (tende ao spam) e preso ao *sandbox* (só destinatários verificados) até a AWS aprovar o *production access*. Pelo Gmail: `smtp.gmail.com:587`, `SMTP_PASS` é uma **senha de app** (exige verificação em duas etapas na conta), o `EMAIL_REMETENTE` precisa ser a própria conta, e o limite é de ~500 envios por dia. Voltar ao SES — com um domínio próprio, por exemplo — é trocar as quatro variáveis `SMTP_*`; o código não muda.
 
 ### Plano — autenticado
 
@@ -737,6 +765,7 @@ Tudo em `/api`. **Autenticado** = exige `Authorization: Bearer <token>`; o `usua
 | `PATCH` | `/api/perfil` | Só os campos que mudaram → **200** `{ perfil, recalculado, metas, planoDesatualizado }`. Campo ausente é campo NÃO alterado — daí PATCH e não PUT. `recalculado` é `false` quando o usuário mexeu só nas restrições (FA02 do UC06). | **400** campo inválido |
 | `POST` | `/api/peso` | `{ pesoKg }` → **201** `{ historico, metas, planoDesatualizado }`. Grava o peso E recalcula TMB, GET, meta calórica, macros e água (RF33 + RF34), na mesma chamada. As metas caem na ficha **agendada** quando existe uma, e só na falta dela na vigente. | **400** pesoKg fora de 25–400 |
 | `GET` | `/api/peso` | → **200** mesmo formato, sem gravar nada | **404** usuário inexistente |
+| `PATCH` | `/api/senha` | `{ senhaAtual, novaSenha, confirmacao }` → **200** `{ token, usuario }`. A troca invalida todo token emitido antes dela; o token devolvido é o que mantém este aparelho logado. | **400** senha atual incorreta — **não 401**, que derrubaria a sessão no interceptor do app —, senha curta, confirmação diferente ou nova igual à atual |
 | `DELETE` | `/api/conta` | `{ senha }` → **204**. Apaga tudo em cascata (RF35, LGPD). Exige a senha **além** do token: a exclusão é irreversível, e o token sozinho tornaria um aparelho desbloqueado por alguns segundos suficiente para destruir o histórico de alguém. | **401** senha incorreta |
 
 ### Registros do dia a dia — autenticado
@@ -822,8 +851,9 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 - **O padrão brasileiro é instrução, não garantia.** Se voltar a aparecer merluza no café da manhã, ver `padrao-refeicoes.ts` — o conserto estrutural é o filtro por refeição.
 - **A corrida na marcação de refeição**: entre o `buscarNoDia` e o `criar` há uma janela em que dois pedidos simultâneos criariam duas linhas. Fechá-la exige índice único por expressão no Postgres.
 - **Fundamentar as constantes sem citação**: `FRACAO_SECUNDARIO` (`data/volume-treino.ts`), `ML_POR_KG` (`data/hidratacao.ts`) e `KCAL_MIN_ABSOLUTO` (`data/limites-seguranca.ts`). Todas têm o aviso no próprio arquivo. Ver `Fontes_Volume_e_Descanso.md`.
-- **Token sem denylist**: o logout descarta o token no cliente, mas ele continua válido até expirar (`JWT_EXPIRES_IN`, 7 dias por padrão). Invalidar de verdade exige uma lista de revogados consultada a cada requisição — decisão consciente de não pagar esse custo agora. Depois da exclusão de conta o token ainda passa pelo middleware, mas toda rota devolve 404.
-- **Recuperação de senha (RF03) e busca de alimentos (RF24)** não foram implementadas — precisam sair do documento como evolução futura, junto das notificações (RNF23–27) e da persistência offline (RNF14).
+- **Logout ainda não revoga o token**: ele é descartado no cliente, mas continua válido até expirar (`JWT_EXPIRES_IN`, 7 dias por padrão). O middleware já consulta o banco a cada requisição (`senhaAlteradaEm`, que derruba as sessões numa troca de senha, e a existência do usuário, que recusa o token de conta excluída) — revogar no logout seria mais uma coluna ou tabela nessa mesma consulta.
+- **A exclusão de conta responde 401 para senha errada**, e o interceptor do app derruba a sessão em qualquer 401 recebido com token: o usuário vai para o Welcome antes de ver "Senha incorreta". A troca de senha usa 400 exatamente por isso; o `excluirConta` deveria seguir o mesmo caminho.
+- **Busca de alimentos (RF24)** não foi implementada — precisa sair do documento como evolução futura, junto das notificações (RNF23–27) e da persistência offline (RNF14).
 - **Remover `benchmark/` e `scripts/bench-modelo.ts`** quando o desvio dos macros estiver resolvido e o modelo, decidido. Enquanto essas duas perguntas estiverem abertas, é o único instrumento que as mede.
 
 ## Cobertura de testes (RNF28)

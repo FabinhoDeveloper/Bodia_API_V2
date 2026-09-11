@@ -13,9 +13,17 @@ process.env.SIMULAR_IA = "true";
 import request from "supertest";
 
 import { assinarToken } from "../src/config/jwt";
+import UserRepository from "../src/repositories/user.repository";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const app = require("../src/app").default;
+
+// O middleware de autenticação consulta `senhaAlteradaEm` a cada requisição, e
+// este teste não tem banco. `null` = usuário que nunca trocou a senha: o token
+// abaixo atravessa o middleware como antes. O spy é no PROTÓTIPO porque a
+// instância que o middleware usa é criada na carga do módulo, fora do alcance
+// do teste.
+jest.spyOn(UserRepository.prototype, "buscarSenhaAlteradaEm").mockResolvedValue(null);
 
 // Token válido de um usuário que não existe no banco. Serve para atravessar o
 // middleware e chegar às validações de payload, que rodam antes do Prisma —
@@ -101,6 +109,10 @@ describe("app (smoke)", () => {
                 "PATCH /api/perfil",
                 "POST /api/peso",
                 "GET /api/peso",
+                "POST /api/senha/esqueci",
+                "POST /api/senha/redefinir",
+                "PATCH /api/senha",
+                "GET /redefinir-senha",
             ]),
         );
     });
@@ -125,6 +137,7 @@ describe("app (smoke)", () => {
             ["delete", "/api/conta"],
             ["get", "/api/perfil"],
             ["patch", "/api/perfil"],
+            ["patch", "/api/senha"],
         ])("devolve 401 em %s %s sem token", async (metodo, rota) => {
             const resposta = await (request(app) as any)[metodo](rota);
 
@@ -377,6 +390,40 @@ describe("app (smoke)", () => {
 
             expect(resposta.status).toBe(400);
             expect(resposta.body.message).toMatch(/dia/i);
+        });
+    });
+    describe("senha", () => {
+        // A página que o link do e-mail abre. Fora de /api, e com CSP própria:
+        // a global está desligada porque a API só devolve JSON.
+        it("serve a página de redefinição em /redefinir-senha", async () => {
+            const resposta = await request(app).get("/redefinir-senha");
+
+            expect(resposta.status).toBe(200);
+            expect(resposta.headers["content-type"]).toMatch(/text\/html/);
+            expect(resposta.headers["content-security-policy"]).toContain("form-action 'none'");
+            expect(resposta.headers["cache-control"]).toBe("no-store");
+            expect(resposta.text).toContain("/api/senha/redefinir");
+        });
+
+        // Validação da senha nova roda antes de o token chegar ao banco.
+        it("devolve 400 ao redefinir com senha curta", async () => {
+            const resposta = await request(app)
+                .post("/api/senha/redefinir")
+                .send({ token: "qualquer", novaSenha: "123", confirmacao: "123" });
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/pelo menos/);
+        });
+
+        // 400, e não 401: um 401 derrubaria a sessão no app.
+        it("devolve 400 ao alterar com confirmação diferente", async () => {
+            const resposta = await request(app)
+                .patch("/api/senha")
+                .set("Authorization", TOKEN)
+                .send({ senhaAtual: "12345678", novaSenha: "senha-nova-1", confirmacao: "outra-senha" });
+
+            expect(resposta.status).toBe(400);
+            expect(resposta.body.message).toMatch(/não conferem/);
         });
     });
 });

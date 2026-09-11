@@ -6,6 +6,7 @@ import ConflitoError from "../../src/errors/conflito.error";
 import PerfilMapper from "../../src/mappers/perfil.mapper";
 import PesoRepository from "../../src/repositories/peso.repository";
 import PlanRepository from "../../src/repositories/plan.repository";
+import RedefinicaoSenhaRepository from "../../src/repositories/redefinicao-senha.repository";
 import ValidationError from "../../src/errors/validation.error";
 import UserRepository from "../../src/repositories/user.repository";
 import UserService from "../../src/services/user.service";
@@ -127,7 +128,21 @@ function repositoryFake(emailExistente = false) {
 
 // rounds baixo de propósito: bcrypt com custo real deixaria a suíte lenta. O
 // repository não é exercitado por este caminho — o cadastro só usa gerarHash.
-const authService = new AuthService(repositoryFake() as unknown as UserRepository, 4);
+/**
+ * A redefinição por e-mail não é exercitada por estes testes — o repository de
+ * tokens e o enviador entram vazios só para o construtor fechar.
+ */
+function novoAuthService(repository: UserRepository) {
+    return new AuthService(
+        repository,
+        {} as RedefinicaoSenhaRepository,
+        { enviar: jest.fn() },
+        4,
+        "http://teste",
+    );
+}
+
+const authService = novoAuthService(repositoryFake() as unknown as UserRepository);
 const engineService = new EngineService();
 const perfilMapper = new PerfilMapper();
 
@@ -213,7 +228,7 @@ describe("UserService", () => {
 
         const { token } = await service.cadastrar(cadastroBase());
 
-        expect(lerToken(token)).toBe("usuario-1");
+        expect(lerToken(token)?.usuarioId).toBe("usuario-1");
     });
 
     it.each([
@@ -524,7 +539,7 @@ describe("UserService", () => {
                 service: new UserService(
                     repository as unknown as UserRepository,
                     engineService,
-                    new AuthService(repository as unknown as UserRepository, 4),
+                    novoAuthService(repository as unknown as UserRepository),
                     pesoRepositoryFake() as unknown as PesoRepository,
                     planRepositoryFake() as unknown as PlanRepository,
                     perfilMapper,

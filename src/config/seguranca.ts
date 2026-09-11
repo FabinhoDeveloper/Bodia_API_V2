@@ -41,3 +41,19 @@ export const limiteAutenticacao = rateLimit({
     skipSuccessfulRequests: true,
     message: { message: "Muitas tentativas. Tente de novo em alguns minutos." },
 });
+
+/**
+ * Pedido de link de redefinição de senha (`POST /senha/esqueci`).
+ *
+ * Separado do `limiteAutenticacao` porque aquele só conta o que FALHA, e esta
+ * rota nunca falha: responde 202 para qualquer e-mail, cadastrado ou não, para
+ * não virar oráculo de contas. Com `skipSuccessfulRequests` o limite nunca
+ * dispararia, e cada pedido custa um e-mail enviado pelo SES.
+ */
+export const limiteRecuperacaoSenha = rateLimit({
+    windowMs: 15 * MINUTO,
+    limit: 5,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { message: "Muitas tentativas. Tente de novo em alguns minutos." },
+});

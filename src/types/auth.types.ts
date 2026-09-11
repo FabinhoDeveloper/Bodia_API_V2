@@ -25,3 +25,22 @@ export interface SessaoIniciada {
     token: string;
     usuario: UsuarioAutenticado;
 }
+
+/**
+ * Corpo de `POST /senha/redefinir` — vem da página aberta pelo link do e-mail.
+ *
+ * A confirmação viaja até o servidor, e não é conferida só na página, pela
+ * mesma razão do aceite dos termos: a tela pode ser contornada, a rota não.
+ */
+export interface RedefinicaoSenhaInput {
+    token: string;
+    novaSenha: string;
+    confirmacao: string;
+}
+
+/** Corpo de `PATCH /senha` — troca feita por quem já está logado. */
+export interface AlteracaoSenhaInput {
+    senhaAtual: string;
+    novaSenha: string;
+    confirmacao: string;
+}

@@ -1,14 +1,18 @@
 import { Router } from "express";
 
 import { bcryptRounds } from "../config/auth";
+import { emailRemetente, getTransportadorEmail, simularEmail, urlPublica } from "../config/email";
 import prismaClient from "../config/prisma";
 import { limiteAutenticacao } from "../config/seguranca";
 import UserController from "../controllers/user.controller";
+import ConsoleEnviador from "../emails/console.enviador";
+import SmtpEnviador from "../emails/smtp.enviador";
 import FichaMapper from "../mappers/ficha.mapper";
 import PerfilMapper from "../mappers/perfil.mapper";
 import autenticacao from "../middlewares/autenticacao";
 import PesoRepository from "../repositories/peso.repository";
 import PlanRepository from "../repositories/plan.repository";
+import RedefinicaoSenhaRepository from "../repositories/redefinicao-senha.repository";
 import UserRepository from "../repositories/user.repository";
 import AuthService from "../services/auth.service";
 import EngineService from "../services/engine.service";
@@ -26,7 +30,15 @@ const userController = new UserController(
     new UserService(
         userRepository,
         new EngineService(),
-        new AuthService(userRepository, bcryptRounds),
+        // O UserService só usa o hash, a sessão e a conferência de senha, mas o
+        // AuthService é um só — a composição é a mesma de auth.routes.ts.
+        new AuthService(
+            userRepository,
+            new RedefinicaoSenhaRepository(prismaClient),
+            simularEmail ? new ConsoleEnviador() : new SmtpEnviador(getTransportadorEmail, emailRemetente),
+            bcryptRounds,
+            urlPublica,
+        ),
         new PesoRepository(prismaClient),
         new PlanRepository(prismaClient, new FichaMapper()),
         perfilMapper,

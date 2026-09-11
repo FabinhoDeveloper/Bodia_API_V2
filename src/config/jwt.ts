@@ -45,19 +45,35 @@ export function assinarToken(usuarioId: string): string {
     return jwt.sign({}, exigirSegredo(), { subject: usuarioId, expiresIn: jwtExpiraEm });
 }
 
+/** O que um token válido diz: de quem é, e quando foi emitido. */
+export interface TokenLido {
+    usuarioId: string;
+    /**
+     * O `iat` do JWT, em SEGUNDOS — é a resolução que o padrão define. Serve para
+     * recusar o token emitido antes da última troca de senha (ver o middleware).
+     */
+    emitidoEmSeg: number;
+}
+
 /**
- * Devolve o id do usuário, ou `null` para token ausente, expirado, adulterado
- * ou assinado com outro segredo.
+ * Devolve quem o token identifica, ou `null` para token ausente, expirado,
+ * adulterado ou assinado com outro segredo.
  *
  * Não distingue os casos de propósito: quem chama responde 401 em todos, e um
  * "token expirado" contra "token inválido" só serviria para dizer a um atacante
  * que ele acertou a assinatura.
  */
-export function lerToken(token: string): string | null {
+export function lerToken(token: string): TokenLido | null {
     try {
         const payload = jwt.verify(token, exigirSegredo()) as JwtPayload;
 
-        return typeof payload.sub === "string" ? payload.sub : null;
+        // Todo token emitido por `assinarToken` tem `iat` — o jsonwebtoken o
+        // inclui por padrão. Um sem ele não saiu daqui.
+        if (typeof payload.sub !== "string" || typeof payload.iat !== "number") {
+            return null;
+        }
+
+        return { usuarioId: payload.sub, emitidoEmSeg: payload.iat };
     } catch {
         return null;
     }

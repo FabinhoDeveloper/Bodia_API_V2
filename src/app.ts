@@ -7,6 +7,7 @@ import { commit, compiladoEm, iniciadoEm, origem } from "./config/versao";
 import errorHandler from "./middlewares/error-handler";
 import notFoundHandler from "./middlewares/not-found-handler";
 import routes from "./routes";
+import paginasRoutes from "./routes/paginas.routes";
 
 const app = express();
 
@@ -35,6 +36,10 @@ app.use(limiteGeral);
 app.get("/", (_req, res) => {
     res.json({ message: "BodIA API no ar", commit, origem, compiladoEm, iniciadoEm });
 });
+
+// Páginas HTML (hoje, só a da redefinição de senha) ficam FORA de /api, que
+// continua devolvendo só JSON. Ver routes/paginas.routes.ts.
+app.use(paginasRoutes);
 
 app.use("/api", routes);
 

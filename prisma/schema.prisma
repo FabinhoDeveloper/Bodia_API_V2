@@ -111,6 +111,15 @@ model Usuario {
   /// cadastro sempre preenche, e recusa o payload sem aceite.
   aceiteTermosEm DateTime?
 
+  /// Quando a senha foi trocada ou redefinida pela última vez.
+  ///
+  /// É o que invalida as sessões abertas antes da troca: o middleware recusa
+  /// todo token emitido antes deste instante. Sem isso, redefinir a senha não
+  /// expulsaria quem já estivesse logado com a antiga — que é justamente o
+  /// motivo de redefinir. Nulo = a senha nunca foi trocada, e não há o que
+  /// conferir.
+  senhaAlteradaEm DateTime?
+
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -122,6 +131,29 @@ model Usuario {
   refeicoesFeitas   RegistroRefeicao[]
   cargas            CargaExercicio[]
   treinosFeitos     RegistroTreino[]
+  tokensRedefinicao TokenRedefinicaoSenha[]
+}
+
+/// Link de redefinição de senha enviado por e-mail (RF03).
+///
+/// Guarda só o HASH (SHA-256) do token: quem ler o banco não consegue montar um
+/// link válido. SHA-256 basta — e não bcrypt — porque o token é 256 bits
+/// aleatórios, não uma senha escolhida por gente; e é o hash determinístico que
+/// permite achar a linha pelo índice único.
+///
+/// Usar o link APAGA a linha. Um `deleteMany` que devolve count 1 é atômico, então
+/// de dois cliques simultâneos só um vence — e não sobra coluna `usadoEm` para
+/// alguém esquecer de conferir.
+model TokenRedefinicaoSenha {
+  id        String   @id @default(uuid())
+  usuarioId String
+  tokenHash String   @unique
+  expiraEm  DateTime
+  criadoEm  DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
 }
 
 /// Restrições declaradas no onboarding (chips "Lactose", "Joelho"... e o campo

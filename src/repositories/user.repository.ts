@@ -49,6 +49,37 @@ export default class UserRepository {
     }
 
     /**
+     * Quando a senha foi trocada pela última vez — é o que o middleware de
+     * autenticação consulta a cada requisição, por isso o `select` num campo só.
+     *
+     * Três respostas, e a diferença importa: `undefined` = o usuário não existe
+     * (conta excluída, token órfão); `null` = existe e nunca trocou a senha;
+     * `Date` = recusar tokens emitidos antes dela.
+     */
+    async buscarSenhaAlteradaEm(usuarioId: string): Promise<Date | null | undefined> {
+        const usuario = await this.prismaClient.usuario.findUnique({
+            where: { id: usuarioId },
+            select: { senhaAlteradaEm: true },
+        });
+
+        return usuario ? usuario.senhaAlteradaEm : undefined;
+    }
+
+    /**
+     * Grava a senha nova de quem já está logado. Marca `senhaAlteradaEm` junto,
+     * no mesmo comando: é o que derruba as sessões abertas nos outros aparelhos.
+     *
+     * Devolve os dados que a sessão nova precisa (`AuthService.abrirSessao`).
+     */
+    atualizarSenha(usuarioId: string, senhaHash: string, agora: Date) {
+        return this.prismaClient.usuario.update({
+            where: { id: usuarioId },
+            data: { senhaHash, senhaAlteradaEm: agora },
+            select: { id: true, nome: true, sobrenome: true, email: true },
+        });
+    }
+
+    /**
      * Apaga a conta e tudo que pende dela (RF35, LGPD).
      *
      * Uma linha só: todas as relações de `Usuario` declaram
