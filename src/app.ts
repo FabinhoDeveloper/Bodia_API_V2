@@ -34,7 +34,7 @@ app.use(limiteGeral);
 // "desconhecido": rodando de `dist` com um `compiladoEm` anterior a ultima
 // alteracao no fonte, o processo esta servindo build velho. Ver config/versao.
 app.get("/", (_req, res) => {
-    res.json({ message: "BodIA API no ar", commit, origem, compiladoEm, iniciadoEm });
+    res.json({ message: "BodIA API", commit, origem, compiladoEm, iniciadoEm });
 });
 
 // Páginas HTML (hoje, só a da redefinição de senha) ficam FORA de /api, que
