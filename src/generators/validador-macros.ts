@@ -11,8 +11,13 @@ import { DesvioMacro, PlanoGerado, Validacao } from "../types/plano.types";
  * o que o desvio está sendo medido; e o teste, que a confere. Um limite que só
  * existe dentro da função que o aplica não pode ser citado por nenhum dos dois
  * outros — mesmo raciocínio dos limites de volume-treino.ts.
+ *
+ * 10% é DECISÃO DE PRODUTO, não número da literatura — a fundamentação não fixa
+ * tolerância para o plano (os 10% de Frankenfield et al. 2005 são o erro da
+ * Mifflin-St Jeor ao estimar a TMB, outra coisa). Já foi 5%, também sem fonte, e
+ * reprovava planos que ficavam dentro das faixas ISSN que o próprio motor cita.
  */
-export const DESVIO_ACEITAVEL_PERCENTUAL = 5;
+export const DESVIO_ACEITAVEL_PERCENTUAL = 10;
 
 /**
  * Recalcula os totais da dieta a partir dos valores da TACO e das gramas

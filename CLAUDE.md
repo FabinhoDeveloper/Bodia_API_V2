@@ -613,7 +613,7 @@ O que é regerado é a **SELEÇÃO**, não as porções. Com o `PorcoesSolver` a
 
 **Macros fora: reajuste por refeição, com memória** (`PlanoIaGenerator.reajustarDieta` → `DietaIaGenerator.reajustar`, etapa `dieta:reajuste:<refeição>` no log). Até aqui a volta seguinte pedia a seleção do **dia inteiro** de novo, numa chamada sem memória. O prompt dizia *"mantenha as demais"* e *"além do que já escolheu"*, mas o modelo nunca recebia o que tinha escolhido: cada volta era um sorteio novo, as refeições boas iam junto, e por isso subir de 3 para 5 tentativas quase não mudou o desvio. Agora:
 
-- **só as refeições fora dos 5%** voltam ao modelo, cada uma numa chamada curta, em `Promise.all`;
+- **só as refeições fora da tolerância** voltam ao modelo, cada uma numa chamada curta, em `Promise.all`;
 - o prompt (`DietaSelecaoPrompt.montarReajuste`) leva **o prato atual** (id e nome) e pede para **mudar o mínimo** — trocar ou acrescentar um alimento;
 - a resposta passa pela mesma conferência de cobertura; um almoço que perdeu a base de carboidrato é **descartado**, e a chamada que falha é engolida;
 - cada refeição fica com a **melhor versão que já teve** (menor soma dos desvios absolutos da refeição). Escolher por refeição é possível porque cada uma tem a própria meta; o `melhor` do laço continua sendo decidido pelo dia, então o plano entregue nunca regride;
@@ -654,7 +654,7 @@ A validação acontece em camadas, e cada uma é mais estreita que a anterior:
 3. **Nome do catálogo**: o `nome` gravado vem do catálogo, não do que a IA escreveu — o app nunca exibe um nome que não corresponde ao id.
 4. **Gramas**: não são mais validadas porque não são mais pedidas ao modelo. O `porcoes.solver` só devolve ids que recebeu, sempre dentro da faixa de `data/porcoes.ts`.
 5. **IDs do treino**: mesma regra do catálogo filtrado.
-6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 5% de tolerância. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
+6. **Macros**: `validador-macros` recalcula kcal e macros pela TACO × gramas propostas e mede o desvio contra a meta. `dentroDoLimite` usa 10% de tolerância (`DESVIO_ACEITAVEL_PERCENTUAL`) — decisão de produto: a fundamentação não fixa número, e os 5% anteriores reprovavam planos dentro das faixas ISSN. A conta é a MESMA para a IA e para o fixture — antes havia uma cópia em cada, e corrigir uma deixava a outra medindo diferente.
 7. **Volume de treino**: `validador-volume` soma as séries por grupo a partir dos exercícios escolhidos e compara com o orçamento do motor, tolerando uma série de diferença (arredondamento legítimo). Também acusa grupo treinado fora do orçamento. Era o irmão que faltava — a dieta tinha os números conferidos e o treino não tinha nada.
 
 8. **O desvio chega ao app**: `conferencia.mapper` traduz a saída dos dois validadores no formato da tela, e o `POST /api/onboarding` a devolve junto do plano (RF22). Medir sem mostrar não fechava o requisito — até então os dois validadores rodavam e o resultado ia apenas para o `console.log` do servidor.
