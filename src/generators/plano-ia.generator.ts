@@ -1,7 +1,14 @@
+import { Alimento } from "../data/alimentos";
 import { ResultadoBenchmarkGeracao } from "../types/benchmark.types";
 import { PerfilParaPlano, ResultadoCalculo } from "../types/perfil.types";
 import CatalogoFilter from "../prompts/catalogo.filter";
-import { PlanoGerado, PlanoValidado, SessaoTreino } from "../types/plano.types";
+import {
+    PlanoGerado,
+    PlanoValidado,
+    Refeicao,
+    SessaoTreino,
+    Validacao,
+} from "../types/plano.types";
 import AjusteSelecao from "./ajuste-selecao";
 import DietaIaGenerator, { DietaGerada } from "./dieta-ia.generator";
 import TreinoIaGenerator from "./treino-ia.generator";
@@ -42,8 +49,8 @@ export default class PlanoIaGenerator {
      * novo só queima crédito e tempo.
      *
      * Já foram três (uma mais duas), e o plano ainda saía fora da tolerância
-     * com frequência. As duas voltas a mais custam pouco porque só a trilha
-     * culpada é refeita — em geral só a seleção da dieta, ~2,5 s cada. Não há
+     * com frequência. As voltas a mais custam pouco porque só o que falhou é
+     * refeito — em geral as refeições fora da meta, uma chamada curta cada. Não há
      * teto de TEMPO no laço: um modelo que estoura o timeout em toda volta
      * passa dos 210 s do app, risco que já existia com três e foi aceito.
      */
@@ -92,9 +99,12 @@ export default class PlanoIaGenerator {
      * sobrou de desvio é responsabilidade de QUAIS alimentos entraram, e é essa
      * a única alavanca que outra chamada pode mover.
      *
-     * Só a trilha que falhou é refeita. Macros fora pedem outra dieta; volume
-     * fora pede outro treino. Refazer as duas gastaria uma chamada à toa e
-     * ainda arriscaria estragar a que já estava boa.
+     * Só a trilha que falhou é refeita. Volume fora pede outro treino. Macros
+     * fora NÃO pedem outra dieta: pedem de novo só as refeições fora da meta,
+     * cada uma com o prato anterior junto, e cada refeição fica com a melhor
+     * versão que já teve (`reajustarDieta`). Pedir o dia inteiro, numa chamada
+     * sem memória, era sortear um cardápio novo a cada volta — e estragar as
+     * refeições que já estavam boas.
      *
      * Esgotadas as tentativas, devolve a MELHOR — nunca deixa o usuário sem
      * plano. O desvio residual segue na conferência, que é o que o RF22 pede.
@@ -108,30 +118,23 @@ export default class PlanoIaGenerator {
         let tentativasFeitas = 0;
         let dieta: DietaGerada | undefined;
         let treino: Treino | undefined;
+        // A dieta atual existe, mas a última conferência reprovou os macros.
+        let reajustar = false;
         let ultimoErro: unknown;
 
         for (let tentativa = 1; tentativa <= PlanoIaGenerator.MAX_TENTATIVAS; tentativa++) {
             const inicio = performance.now();
 
-            // A dieta é refeita quando ainda não existe ou quando os macros
-            // falharam; o treino, quando ainda não existe ou o volume falhou.
-            // Na primeira tentativa nenhum dos dois existe e as duas trilhas
-            // rodam em Promise.all — elas não se conhecem.
-            const ajuste = melhor
-                ? this.ajusteSelecao.comoTexto(
-                      this.ajusteSelecao.montar(melhor.plano, alimentos, resultado),
-                  )
-                : undefined;
-
+            // A dieta é gerada quando ainda não existe e reajustada quando os
+            // macros falharam; o treino é refeito quando ainda não existe ou o
+            // volume falhou. Na primeira tentativa nenhum dos dois existe e as
+            // duas trilhas rodam em Promise.all — elas não se conhecem.
             const pedidoDieta: Promise<DietaGerada> =
                 dieta === undefined
-                    ? this.dietaGenerator.gerar(
-                          resultado,
-                          alimentos,
-                          perfil.restricoesAlimentares,
-                          ajuste,
-                      )
-                    : Promise.resolve(dieta);
+                    ? this.dietaGenerator.gerar(resultado, alimentos, perfil.restricoesAlimentares)
+                    : reajustar
+                      ? this.reajustarDieta(dieta, perfil, alimentos, resultado)
+                      : Promise.resolve(dieta);
 
             const pedidoTreino: Promise<Treino> =
                 treino === undefined
@@ -152,7 +155,12 @@ export default class PlanoIaGenerator {
                 pedidoTreino,
             ]);
 
-            if (respostaDieta.status === "fulfilled") dieta = respostaDieta.value;
+            if (respostaDieta.status === "fulfilled") {
+                dieta = respostaDieta.value;
+                // Já reajustada: se o treino lançou nesta volta, a próxima
+                // confere esta dieta antes de mexer nela de novo.
+                reajustar = false;
+            }
             if (respostaTreino.status === "fulfilled") treino = respostaTreino.value;
 
             if (respostaDieta.status === "rejected" || respostaTreino.status === "rejected") {
@@ -203,8 +211,8 @@ export default class PlanoIaGenerator {
 
             if (validacao.dentroDoLimite && validacaoVolume.dentroDoLimite) break;
 
-            // Descarta só a trilha culpada, para a próxima volta refazê-la.
-            if (!validacao.dentroDoLimite) dieta = undefined;
+            // Só a trilha culpada é mexida na próxima volta.
+            reajustar = !validacao.dentroDoLimite;
             if (!validacaoVolume.dentroDoLimite) treino = undefined;
         }
 
@@ -224,6 +232,93 @@ export default class PlanoIaGenerator {
     }
 
     /**
+     * Pede de novo as refeições fora da meta e fica, refeição a refeição, com a
+     * melhor versão entre a atual e a nova.
+     *
+     * Escolher por refeição, e não pelo dia, é possível porque cada refeição
+     * tem a própria meta e o dia é a soma delas: um almoço melhor não piora o
+     * jantar. O `melhor` do laço continua sendo decidido pelo dia inteiro, então
+     * esta troca nunca faz o plano entregue regredir.
+     *
+     * Sem refeição nenhuma a apontar — o dia fora com todas elas dentro, por
+     * arredondamento das metas — não há o que pedir de forma estreita, e a
+     * seleção do dia é pedida de novo.
+     */
+    private async reajustarDieta(
+        dieta: DietaGerada,
+        perfil: PerfilParaPlano,
+        alimentos: Alimento[],
+        resultado: ResultadoCalculo,
+    ): Promise<DietaGerada> {
+        const correcoes = this.ajusteSelecao.montar(dieta.refeicoes, alimentos, resultado);
+
+        if (!correcoes.length) {
+            return this.dietaGenerator.gerar(resultado, alimentos, perfil.restricoesAlimentares);
+        }
+
+        const novas = await this.dietaGenerator.reajustar(
+            resultado,
+            alimentos,
+            perfil.restricoesAlimentares,
+            dieta.refeicoes,
+            correcoes,
+        );
+
+        const metaPorNome = new Map(resultado.dieta.refeicoes.map((r) => [r.nome, r]));
+        const novaPorNome = new Map(novas.map((r) => [r.nome, r]));
+        const trocadas = new Set<string>();
+
+        const refeicoes = dieta.refeicoes.map((atual) => {
+            const nova = novaPorNome.get(atual.nome);
+            const meta = metaPorNome.get(atual.nome);
+            if (!nova || !meta) return atual;
+
+            const desvioAtual = this.desvioRefeicao(atual, meta, alimentos);
+            const desvioNovo = this.desvioRefeicao(nova, meta, alimentos);
+            const trocou = desvioNovo < desvioAtual;
+
+            console.log(
+                `[dieta] reajuste de "${atual.nome}": desvio ${desvioAtual.toFixed(1)} → ` +
+                    `${desvioNovo.toFixed(1)} (${trocou ? "trocada" : "mantida a anterior"})`,
+            );
+
+            if (!trocou) return atual;
+
+            trocadas.add(atual.nome);
+            return nova;
+        });
+
+        // O aviso de uma refeição (ex.: "Almoço: sem nenhuma fonte de proteína")
+        // descreve a versão ANTIGA. A nova passou na conferência de cobertura do
+        // reajuste, então o aviso dela deixa de valer.
+        const avisos = dieta.avisos.filter(
+            (aviso) => ![...trocadas].some((nome) => aviso.startsWith(`${nome}:`)),
+        );
+
+        return { refeicoes, avisos };
+    }
+
+    private desvioRefeicao(
+        refeicao: Refeicao,
+        meta: { kcal: number; proteina: number; carboidrato: number; gordura: number },
+        alimentos: Alimento[],
+    ): number {
+        return this.somaDosDesvios(
+            this.validadorMacros.validarRefeicao(refeicao.itens, alimentos, meta),
+        );
+    }
+
+    /** Soma dos desvios ABSOLUTOS dos quatro macros, em pontos percentuais. */
+    private somaDosDesvios({ calorias, proteina, carboidrato, gordura }: Validacao): number {
+        return (
+            Math.abs(calorias.desvioPercentual) +
+            Math.abs(proteina.desvioPercentual) +
+            Math.abs(carboidrato.desvioPercentual) +
+            Math.abs(gordura.desvioPercentual)
+        );
+    }
+
+    /**
      * O quanto uma tentativa erra, somado.
      *
      * Soma dos desvios ABSOLUTOS dos quatro macros mais uma penalidade por
@@ -232,12 +327,7 @@ export default class PlanoIaGenerator {
      * `DESVIO_ACEITAVEL_PERCENTUAL`, no validador.
      */
     private desvioTotal(candidato: PlanoValidado): number {
-        const { calorias, proteina, carboidrato, gordura } = candidato.validacao;
-        const macros =
-            Math.abs(calorias.desvioPercentual) +
-            Math.abs(proteina.desvioPercentual) +
-            Math.abs(carboidrato.desvioPercentual) +
-            Math.abs(gordura.desvioPercentual);
+        const macros = this.somaDosDesvios(candidato.validacao);
 
         const sessoesFora = candidato.validacaoVolume.sessoes.filter(
             (sessao) => !sessao.dentroDoLimite,

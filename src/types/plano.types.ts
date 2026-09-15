@@ -60,6 +60,18 @@ export interface SelecaoDieta {
     refeicoes: { nome: string; alimentoIds: number[] }[];
 }
 
+/**
+ * Uma refeição que fechou fora da tolerância de macros, e o que pedir ao modelo
+ * para consertá-la — em linguagem de COMIDA, não de aritmética.
+ *
+ * Quem mede e escreve é o `AjusteSelecao`; quem pede a refeição de novo é o
+ * `DietaIaGenerator`. Por isso o tipo mora aqui, e não num dos dois.
+ */
+export interface CorrecaoRefeicao {
+    refeicao: string;
+    instrucao: string;
+}
+
 // ---------------------------------------------------------------------------
 // Conferência dos macros — o número do gerador nunca é aceito na palavra dele
 // ---------------------------------------------------------------------------

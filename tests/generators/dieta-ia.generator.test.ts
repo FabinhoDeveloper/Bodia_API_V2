@@ -295,4 +295,83 @@ describe("DietaIaGenerator", () => {
             );
         });
     });
+
+    /**
+     * O reajuste por MACROS: a refeição está montável, mas não fechou a meta.
+     * Vai só a refeição apontada, com o prato anterior junto.
+     */
+    describe("reajustar", () => {
+        const AZEITE = 260;
+
+        async function dietaInicial() {
+            const { dietaGenerator } = criarGerador({ "dieta:seleção": selecaoValida() });
+            return dietaGenerator.gerar(resultado, ALIMENTOS, []);
+        }
+
+        it("pede só as refeições corrigidas e devolve só elas, já com gramas", async () => {
+            const atuais = (await dietaInicial()).refeicoes;
+            const { dietaGenerator, aiService } = criarGerador({
+                "dieta:reajuste:Almoço": umaRefeicao("Almoço", [ARROZ, FRANGO, AZEITE]),
+            });
+
+            const novas = await dietaGenerator.reajustar(resultado, ALIMENTOS, [], atuais, [
+                { refeicao: "Almoço", instrucao: "Inclua uma fonte de gordura." },
+            ]);
+
+            expect(etapasDe(aiService)).toEqual(["dieta:reajuste:Almoço"]);
+            expect(novas.map((r) => r.nome)).toEqual(["Almoço"]);
+            expect(idsDe(novas, "Almoço")).toEqual([ARROZ, FRANGO, AZEITE]);
+            expect(novas[0].itens.every((i) => i.gramas > 0)).toBe(true);
+        });
+
+        it("manda ao modelo o prato que ele vai corrigir", async () => {
+            const atuais = (await dietaInicial()).refeicoes;
+            const { dietaGenerator, aiService } = criarGerador({
+                "dieta:reajuste:Jantar": umaRefeicao("Jantar", [ARROZ, FRANGO, AZEITE]),
+            });
+
+            await dietaGenerator.reajustar(resultado, ALIMENTOS, [], atuais, [
+                { refeicao: "Jantar", instrucao: "Inclua uma fonte de gordura." },
+            ]);
+
+            const user = aiService.gerarJson.mock.calls[0][1] as string;
+
+            expect(user).toContain('# Como "Jantar" está hoje');
+            expect(user).toContain(`${ARROZ}|`);
+            expect(user).toContain(`${FRANGO}|`);
+            expect(user).toContain("Inclua uma fonte de gordura.");
+        });
+
+        // Trocar um prato com desvio por um impossível seria piorar em nome de
+        // corrigir.
+        it("descarta o reajuste que deixa o almoço sem base de carboidrato", async () => {
+            const atuais = (await dietaInicial()).refeicoes;
+            const { dietaGenerator } = criarGerador({
+                "dieta:reajuste:Almoço": umaRefeicao("Almoço", [FRANGO, BROCOLIS]),
+            });
+
+            const novas = await dietaGenerator.reajustar(resultado, ALIMENTOS, [], atuais, [
+                { refeicao: "Almoço", instrucao: "Troque um dos carboidratos." },
+            ]);
+
+            expect(novas).toEqual([]);
+        });
+
+        // Um timeout no reajuste não pode tirar do usuário a refeição que ele já
+        // tinha — nem derrubar a volta inteira.
+        it("engole a falha da chamada e segue com as outras refeições", async () => {
+            const atuais = (await dietaInicial()).refeicoes;
+            const { dietaGenerator } = criarGerador({
+                "dieta:reajuste:Almoço": () => Promise.reject(new Error("timeout do modelo")),
+                "dieta:reajuste:Jantar": umaRefeicao("Jantar", [ARROZ, FRANGO, AZEITE]),
+            });
+
+            const novas = await dietaGenerator.reajustar(resultado, ALIMENTOS, [], atuais, [
+                { refeicao: "Almoço", instrucao: "Inclua uma fonte de gordura." },
+                { refeicao: "Jantar", instrucao: "Inclua uma fonte de gordura." },
+            ]);
+
+            expect(novas.map((r) => r.nome)).toEqual(["Jantar"]);
+        });
+    });
 });

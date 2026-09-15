@@ -96,52 +96,64 @@ describe("DietaSelecaoPrompt", () => {
 });
 
 /**
- * O retorno da tentativa anterior. Repetir o mesmo prompt daria a mesma
- * resposta — o que muda a segunda tentativa é o desvio medido voltando para
- * dentro dela.
+ * O ajuste de UMA refeição cujos macros não fecharam. A chamada não tem memória:
+ * sem a seleção anterior no prompt, "troque um dos carboidratos" não se refere a
+ * nada e o modelo sortearia um prato novo.
  */
-describe("DietaSelecaoPrompt — retorno da tentativa anterior", () => {
+describe("DietaSelecaoPrompt — reajuste de uma refeição", () => {
     const prompt = new DietaSelecaoPrompt();
     const resultado = new EngineService().calcular(PERFIL);
+    const alimentos = new CatalogoFilter().filtrarAlimentos([]);
+    const porId = new Map(alimentos.map((a) => [a.id, a]));
 
-    const contextoBase = () => ({
+    const contexto = () => ({
         resultado,
-        alimentos: new CatalogoFilter().filtrarAlimentos([]),
+        alimentos,
         restricoesAlimentares: [],
+        refeicao: "Almoço",
+        anteriores: [porId.get(3)!, porId.get(410)!],
+        instrucao: "Inclua uma fonte de gordura — azeite, castanhas, queijo ou manteiga.",
     });
 
-    it("não fala em tentativa anterior na primeira geração", () => {
-        const { user } = prompt.montar(contextoBase());
+    it("mostra ao modelo o que a refeição tem hoje, com id e nome", () => {
+        const { user } = prompt.montarReajuste(contexto());
 
-        expect(user).not.toContain("Tentativa anterior");
+        expect(user).toContain("# Como \"Almoço\" está hoje");
+        expect(user).toContain(`3|${porId.get(3)!.nome}`);
+        expect(user).toContain(`410|${porId.get(410)!.nome}`);
     });
 
-    it("cita a refeição e a instrução quando há ajuste", () => {
-        const { user } = prompt.montar({
-            ...contextoBase(),
-            ajuste: ["- Almoço: Inclua um carboidrato mais denso."],
-        });
+    it("leva a instrução em linguagem de comida", () => {
+        const { user } = prompt.montarReajuste(contexto());
 
-        expect(user).toContain("# Tentativa anterior");
-        expect(user).toContain("Almoço");
-        expect(user).toContain("Inclua um carboidrato mais denso.");
+        expect(user).toContain("Inclua uma fonte de gordura");
     });
 
     // O catálogo é longo o bastante para enterrar qualquer instrução colocada
-    // antes dele; a mais recente precisa ser a última coisa que o modelo lê.
-    it("põe o ajuste depois do catálogo, junto do pedido", () => {
-        const { user } = prompt.montar({
-            ...contextoBase(),
-            ajuste: ["- Jantar: Inclua uma fonte de gordura."],
-        });
+    // antes dele; o prato atual e o pedido precisam ser o que o modelo lê por último.
+    it("põe o prato atual e a instrução depois do catálogo", () => {
+        const { user } = prompt.montarReajuste(contexto());
 
-        expect(user.indexOf("Tentativa anterior")).toBeGreaterThan(
-            user.indexOf("# Alimentos disponíveis"),
-        );
+        expect(user.indexOf("está hoje")).toBeGreaterThan(user.indexOf("# Alimentos disponíveis"));
+        expect(user.indexOf("# O que mudar")).toBeGreaterThan(user.indexOf("está hoje"));
     });
 
-    it("ignora ajuste vazio", () => {
-        const { user } = prompt.montar({ ...contextoBase(), ajuste: [] });
+    it("pede para mudar o mínimo, e não montar outro prato", () => {
+        const { system } = prompt.montarReajuste(contexto());
+
+        expect(system).toMatch(/Mude o MÍNIMO/);
+        expect(system).toContain('Devolva SÓ a refeição "Almoço"');
+    });
+
+    it("continua proibindo cálculo e id fora da lista", () => {
+        const { system } = prompt.montarReajuste(contexto());
+
+        expect(system).toMatch(/NÃO informe quantidade/);
+        expect(system).toMatch(/SOMENTE alimentos da lista/);
+    });
+
+    it("a seleção completa não fala mais em tentativa anterior", () => {
+        const { user } = prompt.montar({ resultado, alimentos, restricoesAlimentares: [] });
 
         expect(user).not.toContain("Tentativa anterior");
     });

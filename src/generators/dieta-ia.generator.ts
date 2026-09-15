@@ -3,7 +3,7 @@ import { PAPEIS_PROTEICOS, papelDe } from "../data/porcoes";
 import DietaSelecaoPrompt from "../prompts/dieta-selecao.prompt";
 import AiService from "../services/ai.service";
 import { ResultadoCalculo } from "../types/perfil.types";
-import { Refeicao, SelecaoDieta } from "../types/plano.types";
+import { CorrecaoRefeicao, Refeicao, SelecaoDieta } from "../types/plano.types";
 import PorcoesSolver from "./porcoes.solver";
 
 /** Uma refeição já com os alimentos escolhidos na chamada 1. */
@@ -90,7 +90,7 @@ export default class DietaIaGenerator {
     /**
      * Quantas vezes uma refeição defeituosa é pedida de novo.
      *
-     * Duas, e não três como no laço de fora: aqui o pedido é bem mais estreito
+     * Duas, e não cinco como no laço de fora: aqui o pedido é bem mais estreito
      * ("este almoço não tem proteína, refaça só ele") e, se o modelo não atende
      * na segunda, o problema é do catálogo filtrado, não da instrução — insistir
      * só gasta tempo do orçamento do RNF02.
@@ -111,24 +111,62 @@ export default class DietaIaGenerator {
         this.porcoesSolver = porcoesSolver;
     }
 
-    /**
-     * `ajuste` é o retorno da tentativa anterior, quando houve uma: as refeições
-     * que não fecharam e o que fazer com elas. Vazio na primeira.
-     */
     async gerar(
         resultado: ResultadoCalculo,
         alimentos: Alimento[],
         restricoesAlimentares: string[],
-        ajuste?: string[],
     ): Promise<DietaGerada> {
         const { selecionadas, avisos } = await this.selecionar(
             resultado,
             alimentos,
             restricoesAlimentares,
-            ajuste,
         );
 
         return { refeicoes: this.quantificar(resultado, selecionadas), avisos };
+    }
+
+    /**
+     * Pede de novo, ao modelo, cada refeição cujos MACROS não fecharam — com a
+     * seleção anterior dela junto — e devolve as versões novas já com gramas.
+     *
+     * Até aqui o retry do plano pedia a seleção do DIA inteiro de novo, numa
+     * chamada sem memória. O prompt dizia "mantenha as demais" e "além do que já
+     * escolheu", mas o modelo nunca recebia o que tinha escolhido: cada volta era
+     * um sorteio novo, e as refeições que já estavam boas iam junto. Agora só a
+     * refeição culpada volta ao modelo, e ele vê o prato que vai corrigir.
+     *
+     * Devolve SÓ as refeições que voltaram montáveis. Quem decide se a versão
+     * nova é melhor que a anterior é o `PlanoIaGenerator`, que tem o validador:
+     * a nova pode perfeitamente sair pior.
+     *
+     * As chamadas vão em `Promise.all` e a falha de cada uma é engolida, pela
+     * mesma razão do reparo: um timeout aqui não pode deixar o usuário sem a
+     * refeição que ele já tinha.
+     */
+    async reajustar(
+        resultado: ResultadoCalculo,
+        alimentos: Alimento[],
+        restricoesAlimentares: string[],
+        atuais: Refeicao[],
+        correcoes: CorrecaoRefeicao[],
+    ): Promise<Refeicao[]> {
+        const porId = new Map(alimentos.map((a) => [a.id, a]));
+        const atualPorNome = new Map(atuais.map((r) => [r.nome, r]));
+
+        const respostas = await Promise.all(
+            correcoes.map((correcao) =>
+                this.pedirReajuste(correcao, atualPorNome.get(correcao.refeicao), {
+                    resultado,
+                    alimentos,
+                    restricoesAlimentares,
+                    porId,
+                }),
+            ),
+        );
+
+        const reajustadas = respostas.filter((r): r is RefeicaoSelecionada => r !== null);
+
+        return this.quantificar(resultado, reajustadas);
     }
 
     /** CHAMADA 1 — devolve as refeições com os objetos Alimento já resolvidos. */
@@ -136,13 +174,11 @@ export default class DietaIaGenerator {
         resultado: ResultadoCalculo,
         alimentos: Alimento[],
         restricoesAlimentares: string[],
-        ajuste?: string[],
     ): Promise<{ selecionadas: RefeicaoSelecionada[]; avisos: string[] }> {
         const { system, user } = this.selecaoPrompt.montar({
             resultado,
             alimentos,
             restricoesAlimentares,
-            ajuste,
         });
 
         const resposta = await this.aiService.gerarJson(system, user, "dieta:seleção");
@@ -366,6 +402,60 @@ export default class DietaIaGenerator {
             console.log(`[dieta] reparo de "${nome}" falhou — ${motivo}`);
 
             return { nome, alimentos: [], defeito };
+        }
+    }
+
+    /**
+     * UMA refeição, pedida de novo com a seleção anterior e a instrução junto.
+     *
+     * Devolve `null` — e a refeição fica como estava — quando a chamada falha ou
+     * quando a resposta não é montável (vazia, ou um almoço que perdeu a base de
+     * carboidrato). Trocar um prato com desvio por um prato impossível seria
+     * piorar em nome de corrigir.
+     */
+    private async pedirReajuste(
+        correcao: CorrecaoRefeicao,
+        atual: Refeicao | undefined,
+        contexto: {
+            resultado: ResultadoCalculo;
+            alimentos: Alimento[];
+            restricoesAlimentares: string[];
+            porId: Map<number, Alimento>;
+        },
+    ): Promise<RefeicaoSelecionada | null> {
+        const nome = correcao.refeicao;
+        const anteriores = (atual?.itens ?? [])
+            .map((item) => contexto.porId.get(item.alimentoId))
+            .filter((a): a is Alimento => a !== undefined);
+
+        const { system, user } = this.selecaoPrompt.montarReajuste({
+            resultado: contexto.resultado,
+            alimentos: contexto.alimentos,
+            restricoesAlimentares: contexto.restricoesAlimentares,
+            refeicao: nome,
+            anteriores,
+            instrucao: correcao.instrucao,
+        });
+
+        try {
+            const resposta = await this.aiService.gerarJson(system, user, `dieta:reajuste:${nome}`);
+            const selecao = this.parsearSelecao(resposta);
+
+            const escolhida = selecao.refeicoes.find((r) => r.nome === nome) ?? selecao.refeicoes[0];
+            const alimentos = this.resolver(nome, escolhida?.alimentoIds ?? [], contexto.porId);
+            const defeito = this.conferir(nome, alimentos);
+
+            if (defeito) {
+                console.log(`[dieta] reajuste de "${nome}" descartado: ${defeito.motivo}`);
+                return null;
+            }
+
+            return { nome, alimentos };
+        } catch (erro) {
+            const motivo = erro instanceof Error ? erro.message : String(erro);
+            console.log(`[dieta] reajuste de "${nome}" falhou — ${motivo}`);
+
+            return null;
         }
     }
 

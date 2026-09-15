@@ -2,13 +2,7 @@ import { Alimento } from "../data/alimentos";
 import { DESVIO_ACEITAVEL_PERCENTUAL } from "./validador-macros";
 import ValidadorMacros from "./validador-macros";
 import { ResultadoCalculo } from "../types/perfil.types";
-import { PlanoGerado } from "../types/plano.types";
-
-/** Um macro fora da tolerância, já traduzido no que o modelo deve fazer. */
-interface Correcao {
-    refeicao: string;
-    instrucao: string;
-}
+import { CorrecaoRefeicao, Refeicao } from "../types/plano.types";
 
 /**
  * O que dizer ao modelo quando o plano não fechou, para a tentativa seguinte.
@@ -41,14 +35,14 @@ export default class AjusteSelecao {
      * errado, não onde. O modelo monta uma refeição por vez.
      */
     montar(
-        plano: PlanoGerado,
+        refeicoes: Refeicao[],
         alimentos: Alimento[],
         resultado: ResultadoCalculo,
-    ): Correcao[] {
+    ): CorrecaoRefeicao[] {
         const metaPorNome = new Map(resultado.dieta.refeicoes.map((r) => [r.nome, r]));
-        const correcoes: Correcao[] = [];
+        const correcoes: CorrecaoRefeicao[] = [];
 
-        for (const refeicao of plano.dieta.refeicoes) {
+        for (const refeicao of refeicoes) {
             const meta = metaPorNome.get(refeicao.nome);
             if (!meta) continue;
 
@@ -66,11 +60,6 @@ export default class AjusteSelecao {
         }
 
         return correcoes;
-    }
-
-    /** As correções já como as linhas que entram no prompt. */
-    comoTexto(correcoes: Correcao[]): string[] {
-        return correcoes.map((c) => `- ${c.refeicao}: ${c.instrucao}`);
     }
 
     /**

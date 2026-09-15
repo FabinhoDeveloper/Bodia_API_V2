@@ -7,14 +7,6 @@ export interface ContextoSelecao {
     resultado: ResultadoCalculo;
     alimentos: Alimento[];
     restricoesAlimentares: string[];
-    /**
-     * O que deu errado na tentativa anterior, uma linha por refeição, já em
-     * linguagem de escolha de alimento. Vazio ou ausente na primeira tentativa.
-     *
-     * Vai no fim do prompt do USUÁRIO, e não no system: é informação daquela
-     * geração específica, e o system descreve a tarefa, que não mudou.
-     */
-    ajuste?: string[];
 }
 
 /**
@@ -34,6 +26,27 @@ export interface ContextoReparo {
     /** O que estava errado, em português. */
     motivo: string;
     /** O que fazer, em linguagem de comida. */
+    instrucao: string;
+}
+
+/**
+ * O pedido de AJUSTE de uma refeição: ela está montável, mas os macros fecharam
+ * fora da tolerância mesmo com as melhores porções.
+ *
+ * Difere do reparo no que o modelo recebe: aqui vai a seleção ANTERIOR. Sem ela,
+ * "troque um dos carboidratos" e "além do que já escolheu" não se referem a
+ * nada — a chamada não tem memória, e o modelo sortearia um prato novo em vez de
+ * corrigir o que errou. Era exatamente o que o retry do dia inteiro fazia.
+ */
+export interface ContextoReajuste {
+    resultado: ResultadoCalculo;
+    alimentos: Alimento[];
+    restricoesAlimentares: string[];
+    /** O nome exato da refeição a ajustar. */
+    refeicao: string;
+    /** Os alimentos que ela tem hoje, na ordem em que foram escolhidos. */
+    anteriores: Alimento[];
+    /** O que mudar, em linguagem de comida (`AjusteSelecao`). */
     instrucao: string;
 }
 
@@ -78,6 +91,20 @@ export default class DietaSelecaoPrompt {
         return {
             system: this.montarSystemReparo(contexto),
             user: this.montarUserReparo(contexto),
+        };
+    }
+
+    /**
+     * O ajuste de UMA refeição cujos macros não fecharam.
+     *
+     * Mesmo envelope de resposta da seleção completa, pela mesma razão do
+     * reparo: um parser só. O catálogo inteiro vai junto — é ele que limita os
+     * ids que o modelo pode citar.
+     */
+    montarReajuste(contexto: ContextoReajuste): PromptMontado {
+        return {
+            system: this.montarSystemReajuste(contexto),
+            user: this.montarUserReajuste(contexto),
         };
     }
 
@@ -142,8 +169,8 @@ ${dieta.refeicoes.map((r) => `${r.nome}: refeição de aproximadamente ${r.kcal}
 Formato: id|nome|kcal|proteína|carboidrato|gordura — todos por 100 g.
 Os números servem para você julgar se o alimento cabe na refeição; não são para calcular nada.
 
-${alimentos.map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`).join("\n")}
-${this.montarAjuste(contexto.ajuste)}
+${this.listarCatalogo(alimentos)}
+
 Escolha os alimentos de cada refeição em json.`;
     }
 
@@ -198,7 +225,7 @@ O tamanho indica o peso dela no dia: escolha alimentos à altura. NÃO calcule p
 Formato: id|nome|kcal|proteína|carboidrato|gordura — todos por 100 g.
 Os números servem para você julgar se o alimento cabe na refeição; não são para calcular nada.
 
-${alimentos.map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`).join("\n")}
+${this.listarCatalogo(alimentos)}
 
 # Por que a tentativa anterior foi recusada
 
@@ -210,26 +237,78 @@ ${contexto.instrucao}
 Monte "${refeicao}" de novo em json.`;
     }
 
+    private montarSystemReajuste(contexto: ContextoReajuste): string {
+        return `Você monta o cardápio de um aplicativo brasileiro de nutrição, o BodIA.
+
+## Sua única tarefa
+
+AJUSTAR UMA refeição — "${contexto.refeicao}" — que você já montou. Ela é plausível, mas mesmo com as melhores porções não fecha a meta nutricional dela. Nada além dela.
+
+REGRAS INVIOLÁVEIS:
+1. NÃO informe quantidade, gramas, calorias ou qualquer número nutricional. Outra etapa calcula as porções.
+2. Escolha SOMENTE alimentos da lista fornecida, pelo id exato. Nunca invente um item nem cite um id que não esteja na lista.
+3. Devolva SÓ a refeição "${contexto.refeicao}". Não monte as outras refeições do dia.
+4. Mude o MÍNIMO: troque ou acrescente um alimento seguindo a instrução, e mantenha os outros. Não monte um prato novo do zero.
+5. Use de 3 a 5 alimentos (2 a 4 se for lanche ou ceia).
+6. Se for refeição principal (almoço, jantar), ela continua precisando de UMA BASE DE CARBOIDRATO, UMA FONTE DE PROTEÍNA e UMA FONTE DE GORDURA.
+
+## Como é esta refeição no Brasil
+
+${descreverPadrao([contexto.refeicao])}
+
+Prefira alimentos comuns e baratos, do dia a dia.
+
+## Formato da resposta
+
+Responda SOMENTE com um objeto json válido, sem texto antes ou depois e sem blocos de código markdown, exatamente nesta estrutura, com UMA refeição só e a lista COMPLETA de alimentos dela (os mantidos e os novos):
+
+{
+  "refeicoes": [
+    { "nome": "${contexto.refeicao}", "alimentoIds": [3, 60, 407, 84] }
+  ]
+}`;
+    }
+
     /**
-     * O retorno da tentativa anterior.
-     *
-     * Fica no FIM do prompt, logo antes do pedido, porque é a instrução mais
-     * recente e a que precisa pesar mais na resposta — e porque o catálogo, que
-     * vem antes, é longo o bastante para enterrar qualquer coisa colocada no
-     * meio dele.
+     * A seleção anterior e a instrução ficam no FIM, depois do catálogo: são o
+     * que precisa pesar mais na resposta, e o catálogo é longo o bastante para
+     * enterrar qualquer coisa colocada antes dele.
      */
-    private montarAjuste(ajuste: string[] | undefined): string {
-        if (!ajuste?.length) return "";
+    private montarUserReajuste(contexto: ContextoReajuste): string {
+        const { resultado, alimentos, restricoesAlimentares, refeicao, anteriores } = contexto;
+        const meta = resultado.dieta.refeicoes.find((r) => r.nome === refeicao);
 
-        return `
-# Tentativa anterior
+        return `# Usuário
 
-Você já montou este cardápio uma vez e ele não fechou as metas. As refeições
-abaixo precisam de outra escolha de alimentos — mantenha as demais como estavam
-em espírito, e continue respeitando todas as regras.
+Objetivo: ${this.descreverObjetivo(resultado.meta.objetivo)}
+Restrições alimentares declaradas: ${restricoesAlimentares.length > 0 ? restricoesAlimentares.join(", ") : "nenhuma"}
 
-${ajuste.join("\n")}
-`;
+# Refeição a ajustar
+
+${refeicao}${meta ? `: refeição de aproximadamente ${meta.kcal} kcal` : ""}
+
+# Alimentos disponíveis
+
+Formato: id|nome|kcal|proteína|carboidrato|gordura — todos por 100 g.
+Os números servem para você julgar se o alimento cabe na refeição; não são para calcular nada.
+
+${this.listarCatalogo(alimentos)}
+
+# Como "${refeicao}" está hoje
+
+${anteriores.map((a) => `${a.id}|${a.nome}`).join("\n")}
+
+# O que mudar
+
+${contexto.instrucao}
+
+Devolva "${refeicao}" ajustada em json.`;
+    }
+
+    private listarCatalogo(alimentos: Alimento[]): string {
+        return alimentos
+            .map((a) => `${a.id}|${a.nome}|${a.kcal}|${a.proteina}|${a.carboidrato}|${a.gordura}`)
+            .join("\n");
     }
 
     private descreverObjetivo(objetivo: string): string {

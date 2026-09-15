@@ -605,15 +605,25 @@ O segundo é mais novo, e por um tempo não existiu: as conferências de cobertu
 
 ### O retry do PLANO: viu que errou, pede de novo
 
-Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **5 tentativas** (uma mais quatro). Já foram 3; subiu porque o plano ainda saía fora da tolerância com frequência, e cada volta extra costuma custar só a seleção da dieta (~2,5 s). Não há teto de tempo no laço: um modelo que estoura o timeout em toda volta passa dos 210 s do app — risco que já existia com 3.
+Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **5 tentativas** (uma mais quatro). Já foram 3; subiu porque o plano ainda saía fora da tolerância com frequência. Cada volta extra costuma custar só o reajuste das refeições fora da meta — chamadas curtas, em paralelo. Não há teto de tempo no laço: um modelo que estoura o timeout em toda volta passa dos 210 s do app — risco que já existia com 3.
 
 O que é regerado é a **SELEÇÃO**, não as porções. Com o `PorcoesSolver` as gramas já são as melhores possíveis para os alimentos escolhidos: o que sobrou de desvio é responsabilidade de QUAIS alimentos entraram, e é a única alavanca que outra chamada pode mover. Pedir as gramas de novo não teria o que melhorar.
 
-**Só a trilha que falhou é refeita** — macros fora pedem outra dieta, volume fora pede outro treino. Refazer as duas gastaria uma chamada à toa e ainda arriscaria estragar a que já estava boa. É essa decisão que faz o retry caber no orçamento de tempo (ver "Latência").
+**Só a trilha que falhou é mexida** — volume fora pede outro treino; macros fora pedem o **reajuste das refeições fora da meta**, não outra dieta. Refazer as duas trilhas gastaria uma chamada à toa e ainda arriscaria estragar a que já estava boa. É essa decisão que faz o retry caber no orçamento de tempo (ver "Latência").
 
-O retorno vai no prompt em **linguagem de comida, não de aritmética** (`generators/ajuste-selecao.ts`): *"Almoço: inclua um carboidrato mais denso — farofa, pão, macarrão ou batata"*, e não "o almoço ficou 18% abaixo no carboidrato". É a mesma razão pela qual o prompt de seleção proíbe o modelo de calcular. Uma instrução por refeição, a do macro **mais** fora: mandar corrigir os quatro de uma vez dá ordens que se contradizem, e o modelo escolhe qual seguir.
+**Macros fora: reajuste por refeição, com memória** (`PlanoIaGenerator.reajustarDieta` → `DietaIaGenerator.reajustar`, etapa `dieta:reajuste:<refeição>` no log). Até aqui a volta seguinte pedia a seleção do **dia inteiro** de novo, numa chamada sem memória. O prompt dizia *"mantenha as demais"* e *"além do que já escolheu"*, mas o modelo nunca recebia o que tinha escolhido: cada volta era um sorteio novo, as refeições boas iam junto, e por isso subir de 3 para 5 tentativas quase não mudou o desvio. Agora:
+
+- **só as refeições fora dos 5%** voltam ao modelo, cada uma numa chamada curta, em `Promise.all`;
+- o prompt (`DietaSelecaoPrompt.montarReajuste`) leva **o prato atual** (id e nome) e pede para **mudar o mínimo** — trocar ou acrescentar um alimento;
+- a resposta passa pela mesma conferência de cobertura; um almoço que perdeu a base de carboidrato é **descartado**, e a chamada que falha é engolida;
+- cada refeição fica com a **melhor versão que já teve** (menor soma dos desvios absolutos da refeição). Escolher por refeição é possível porque cada uma tem a própria meta; o `melhor` do laço continua sendo decidido pelo dia, então o plano entregue nunca regride;
+- se o dia estiver fora com todas as refeições dentro (arredondamento das metas), não há refeição a apontar e a seleção do dia é pedida de novo.
+
+A instrução vai em **linguagem de comida, não de aritmética** (`generators/ajuste-selecao.ts`): *"Inclua um carboidrato mais denso — farofa, pão, macarrão ou batata"*, e não "o almoço ficou 18% abaixo no carboidrato". É a mesma razão pela qual o prompt de seleção proíbe o modelo de calcular. Uma instrução por refeição, a do macro **mais** fora: mandar corrigir os quatro de uma vez dá ordens que se contradizem, e o modelo escolhe qual seguir.
 
 O desvio é medido **por refeição** (`ValidadorMacros.validarRefeicao`), e não pelo dia: o total do dia diz que algo está errado, não onde — e o modelo monta uma refeição por vez.
+
+**O retry não resolve tudo.** Parte do desvio é estrutural e nenhuma escolha de alimento o fecha: as metas de proteína e gordura contra o prato brasileiro (ver "Próximos passos"), porções presas às faixas com 3–5 alimentos para quatro alvos (o solver sacrifica primeiro a gordura, `PESO` 0,6), e a própria TACO, cujas kcal não batem com 4/4/9 dos macros — frango grelhado −5,5%, patinho −4,5%, banana +11,5% —, o que come parte da tolerância antes de qualquer escolha.
 
 Esgotadas as tentativas, devolve a **melhor** (menor soma dos desvios absolutos, com peso extra por sessão de treino fora do orçamento). Nunca deixa o usuário sem plano; o desvio residual segue na conferência, que é o que o RF22 pede. `ConferenciaDTO.tentativas` sobe até o app de propósito — é o que permite medir a frequência do retry sem ler log de servidor.
 
@@ -625,7 +635,7 @@ Uma trilha que **lança** também gasta uma tentativa, em vez de matar a geraç�
 
 - **Só a refeição culpada é refeita**, e não o dia: as outras já estavam boas, e outra rodada completa gastaria uma resposta grande para arriscar estragá-las.
 - **As defeituosas de uma rodada vão em `Promise.all`** — são independentes, e o custo da rodada é o de UMA chamada, não o de uma por refeição. É isso que faz o reparo caber no orçamento do RNF02.
-- **Dois reparos, não três** como no laço de fora: o pedido aqui é bem mais estreito ("este almoço não tem proteína, refaça só ele") e, se o modelo não atende na segunda, o problema é do catálogo filtrado, não da instrução.
+- **Dois reparos, não cinco** como no laço de fora: o pedido aqui é bem mais estreito ("este almoço não tem proteína, refaça só ele") e, se o modelo não atende na segunda, o problema é do catálogo filtrado, não da instrução.
 - **A chamada de reparo que falha é engolida**: devolve a seleção original e o defeito continua pendente. Quem já tinha um prato imperfeito não pode acabar sem prato nenhum por causa da tentativa de consertá-lo.
 - **Esgotados os reparos, a refeição imperfeita é ENTREGUE**, com o motivo em `ConferenciaDTO.avisos` ("Almoço: sem nenhuma fonte de proteína"). É a mesma política do `PorcoesSolver` para meta inalcançável — prato comestível com desvio honesto vale mais que usuário sem plano —, e o desvio que ela causa ainda passa pelo `ValidadorMacros`.
 
@@ -708,7 +718,7 @@ O resultado contraria a intuição de que a seleção de alimentos seria o garga
 | mulher 57 kg | **11,5 s** | 6,5 s | 2,4 s · 2,6 s |
 | homem 85 kg | **9,5 s** | 5,5 s | 2,1 s · 2,0 s |
 
-Os dois ficaram **dentro dos 15 s do RNF02 mesmo no pior caso**, e o motivo é a decisão de refazer só a trilha culpada: o volume passou nas duas, então as tentativas 2 e 3 custaram apenas a chamada de seleção (~2,5 s) em vez de uma geração inteira. Refazer as duas trilhas teria custado ~6 s por volta e estourado o requisito.
+Os dois ficaram **dentro dos 15 s do RNF02 mesmo no pior caso**, e o motivo é a decisão de refazer só a trilha culpada: o volume passou nas duas, então as tentativas 2 e 3 custaram apenas a chamada de seleção (~2,5 s) em vez de uma geração inteira. (Medido quando a volta ainda pedia a seleção do dia; com o reajuste por refeição a volta passou a ser várias chamadas curtas em paralelo, e o número precisa ser remedido.) Refazer as duas trilhas teria custado ~6 s por volta e estourado o requisito.
 
 Com o solver e o retry, o `gpt-5` passou a caber no RNF02 — a tabela acima, de antes deles, media a geração única e não vale mais como veredito do modelo.
 

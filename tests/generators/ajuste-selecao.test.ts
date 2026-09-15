@@ -3,7 +3,7 @@ import AjusteSelecao from "../../src/generators/ajuste-selecao";
 import ValidadorMacros from "../../src/generators/validador-macros";
 import EngineService from "../../src/services/engine.service";
 import { PerfilInput } from "../../src/types/perfil.types";
-import { PlanoGerado } from "../../src/types/plano.types";
+import { Refeicao } from "../../src/types/plano.types";
 
 const PERFIL: PerfilInput = {
     sexo: "M",
@@ -23,18 +23,13 @@ const FRANGO = 410;
 const ALFACE = 91;
 const AZEITE = 260;
 
-function plano(itensDoAlmoco: { alimentoId: number; nome: string; gramas: number }[]): PlanoGerado {
-    return {
-        dieta: {
-            refeicoes: [
-                { nome: "Café da manhã", itens: [] },
-                { nome: "Almoço", itens: itensDoAlmoco },
-                { nome: "Lanche da tarde", itens: [] },
-                { nome: "Jantar", itens: [] },
-            ],
-        },
-        treino: { sessoes: [] },
-    };
+function plano(itensDoAlmoco: { alimentoId: number; nome: string; gramas: number }[]): Refeicao[] {
+    return [
+        { nome: "Café da manhã", itens: [] },
+        { nome: "Almoço", itens: itensDoAlmoco },
+        { nome: "Lanche da tarde", itens: [] },
+        { nome: "Jantar", itens: [] },
+    ];
 }
 
 describe("AjusteSelecao", () => {
@@ -97,19 +92,8 @@ describe("AjusteSelecao", () => {
     });
 
     it("não devolve correção para refeição sem meta correspondente", () => {
-        const semMeta: PlanoGerado = {
-            dieta: { refeicoes: [{ nome: "Brunch", itens: [] }] },
-            treino: { sessoes: [] },
-        };
+        const semMeta: Refeicao[] = [{ nome: "Brunch", itens: [] }];
 
         expect(ajusteSelecao.montar(semMeta, ALIMENTOS, resultado)).toEqual([]);
-    });
-
-    it("formata cada correção como uma linha de lista", () => {
-        const texto = ajusteSelecao.comoTexto([
-            { refeicao: "Almoço", instrucao: "Inclua um carboidrato mais denso." },
-        ]);
-
-        expect(texto).toEqual(["- Almoço: Inclua um carboidrato mais denso."]);
     });
 });

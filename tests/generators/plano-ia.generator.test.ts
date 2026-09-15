@@ -38,6 +38,7 @@ const REFEICOES = ["Café da manhã", "Almoço", "Lanche da tarde", "Jantar"];
 // Frango, peito, sem pele, grelhado (id 410): 159.19 kcal, 32.03 prot, 0 carb, 2.48 gord /100g
 const ARROZ = 3;
 const FRANGO = 410;
+const AZEITE = 260;
 
 function selecaoValida() {
     return {
@@ -147,6 +148,16 @@ const RESPOSTAS_OK = {
     "dieta:seleção": selecaoValida(),
     treino: treinoValido(),
 };
+
+/** A resposta de reajuste de cada refeição — a etapa carrega o nome dela. */
+function reajustesCom(alimentoIds: number[]) {
+    return Object.fromEntries(
+        REFEICOES.map((nome) => [
+            `dieta:reajuste:${nome}`,
+            { refeicoes: [{ nome, alimentoIds }] },
+        ]),
+    );
+}
 
 describe("PlanoIaGenerator", () => {
     const resultado = new EngineService().calcular(PERFIL);
@@ -431,7 +442,6 @@ describe("PlanoIaGenerator", () => {
             const { tentativas } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
             expect(tentativas).toBe(5);
-            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(5);
             expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(5);
         });
 
@@ -449,35 +459,102 @@ describe("PlanoIaGenerator", () => {
             expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(5);
         });
 
-        it("refaz só a dieta quando apenas os macros falham", async () => {
-            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
-                macros: false,
-                volume: true,
-            });
+        // Pedir o dia inteiro de novo, numa chamada sem memória, era sortear
+        // outro cardápio a cada volta. Macros fora pedem só as refeições fora.
+        it("macros fora não pedem a seleção do dia de novo, e sim o reajuste das refeições", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(
+                { ...RESPOSTAS_OK, ...reajustesCom([ARROZ, FRANGO, AZEITE]) },
+                { macros: false, volume: true },
+            );
 
             await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(5);
-            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(1);
+            const etapas = etapasDe(aiService);
+
+            expect(etapas.filter((e) => e === "dieta:seleção")).toHaveLength(1);
+            expect(etapas.filter((e) => e === "treino")).toHaveLength(1);
+            expect(etapas.some((e) => e.startsWith("dieta:reajuste:"))).toBe(true);
         });
 
-        // Repetir o mesmo prompt daria a mesma resposta. O que muda a segunda
-        // tentativa é o desvio medido voltando para dentro dela.
-        it("realimenta o desvio no prompt da tentativa seguinte", async () => {
-            const { planoIaGenerator, aiService } = criarGerador(RESPOSTAS_OK, {
-                macros: false,
-                volume: true,
-            });
+        it("reajusta só as refeições que o AjusteSelecao aponta", async () => {
+            const aiService = aiServiceFake({ ...RESPOSTAS_OK, ...reajustesCom([ARROZ, FRANGO, AZEITE]) });
+
+            // Com arroz e frango as quatro refeições do fixture ficam fora, e
+            // "só as fora" viraria "todas". O fake aponta uma só.
+            const soOAlmoco = {
+                montar: () => [{ refeicao: "Almoço", instrucao: "Inclua uma fonte de gordura." }],
+            } as unknown as AjusteSelecao;
+
+            const planoIaGenerator = new PlanoIaGenerator(
+                new CatalogoFilter(),
+                new DietaIaGenerator(new DietaSelecaoPrompt(), aiService, new PorcoesSolver()),
+                new TreinoIaGenerator(new TreinoPrompt(), aiService),
+                validadorMacrosFake(false),
+                validadorVolumeFake(true),
+                soOAlmoco,
+            );
 
             await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            const selecoes = aiService.gerarJson.mock.calls.filter((c) => c[2] === "dieta:seleção");
+            const reajustes = etapasDe(aiService).filter((e) => e.startsWith("dieta:reajuste:"));
 
-            expect(selecoes[0][1]).not.toContain("Tentativa anterior");
-            expect(selecoes[1][1]).toContain("Tentativa anterior");
-            expect(selecoes[1][1]).toContain("Almoço");
+            expect(reajustes.length).toBeGreaterThan(0);
+            expect(new Set(reajustes)).toEqual(new Set(["dieta:reajuste:Almoço"]));
         });
 
+        // A chamada não tem memória: sem o prato anterior, "troque um dos
+        // carboidratos" não se refere a nada.
+        it("manda o prato anterior no prompt do reajuste", async () => {
+            const { planoIaGenerator, aiService } = criarGerador(
+                { ...RESPOSTAS_OK, ...reajustesCom([ARROZ, FRANGO, AZEITE]) },
+                { macros: false, volume: true },
+            );
+
+            await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            const reajuste = aiService.gerarJson.mock.calls.find((c) =>
+                (c[2] as string).startsWith("dieta:reajuste:"),
+            )!;
+
+            expect(reajuste[1]).toContain("está hoje");
+            expect(reajuste[1]).toContain(`${ARROZ}|`);
+            expect(reajuste[1]).toContain(`${FRANGO}|`);
+        });
+
+        // A versão nova pode sair pior. Cada refeição fica com a melhor que já
+        // teve, então o reajuste nunca faz uma refeição regredir.
+        it("nenhuma refeição termina pior do que começou", async () => {
+            const alimentos = new CatalogoFilter().filtrarAlimentos([]);
+            const validador = new ValidadorMacros();
+            const metaDe = (nome: string) => resultado.dieta.refeicoes.find((r) => r.nome === nome)!;
+            const desvio = (refeicao: { nome: string; itens: { alimentoId: number; gramas: number }[] }) => {
+                const v = validador.validarRefeicao(refeicao.itens, alimentos, metaDe(refeicao.nome));
+                return [v.calorias, v.proteina, v.carboidrato, v.gordura].reduce(
+                    (soma, m) => soma + Math.abs(m.desvioPercentual),
+                    0,
+                );
+            };
+
+            const inicial = await new DietaIaGenerator(
+                new DietaSelecaoPrompt(),
+                aiServiceFake(RESPOSTAS_OK),
+                new PorcoesSolver(),
+            ).gerar(resultado, alimentos, []);
+
+            // Só arroz: pior que arroz com frango em qualquer refeição com meta
+            // de proteína — mas montável fora do almoço e do jantar.
+            const { planoIaGenerator } = criarGerador(
+                { ...RESPOSTAS_OK, ...reajustesCom([ARROZ]) },
+                { macros: false, volume: true },
+            );
+
+            const { plano } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
+
+            for (const refeicao of plano.dieta.refeicoes) {
+                const antes = inicial.refeicoes.find((r) => r.nome === refeicao.nome)!;
+                expect(desvio(refeicao)).toBeLessThanOrEqual(desvio(antes));
+            }
+        });
         // Nunca deixa o usuário sem plano: o desvio residual segue na
         // conferência, que é o que o RF22 pede.
         it("devolve um plano mesmo esgotadas as tentativas", async () => {
