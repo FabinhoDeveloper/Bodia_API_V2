@@ -37,12 +37,17 @@ import ValidadorVolume from "./validador-volume";
  */
 export default class PlanoIaGenerator {
     /**
-     * Uma tentativa mais duas. O teto existe porque nem todo desvio é culpa da
+     * Uma tentativa mais quatro. O teto existe porque nem todo desvio é culpa da
      * seleção: se a meta da refeição não couber em porções realistas, tentar de
-     * novo só queima crédito e tempo. Duas voltas dão ao modelo a chance de
-     * trocar um alimento; a terceira já seria teimosia.
+     * novo só queima crédito e tempo.
+     *
+     * Já foram três (uma mais duas), e o plano ainda saía fora da tolerância
+     * com frequência. As duas voltas a mais custam pouco porque só a trilha
+     * culpada é refeita — em geral só a seleção da dieta, ~2,5 s cada. Não há
+     * teto de TEMPO no laço: um modelo que estoura o timeout em toda volta
+     * passa dos 210 s do app, risco que já existia com três e foi aceito.
      */
-    private static readonly MAX_TENTATIVAS = 3;
+    private static readonly MAX_TENTATIVAS = 5;
 
     /**
      * O quanto uma sessão de treino fora do orçamento pesa na comparação entre
@@ -140,7 +145,7 @@ export default class PlanoIaGenerator {
             // E, principalmente: uma trilha que LANÇA agora gasta uma tentativa
             // em vez de matar a geração. É o que cobre JSON inválido, resposta
             // vazia e timeout do modelo — até então uma única falha transitória
-            // derrubava a requisição inteira mesmo havendo duas tentativas
+            // derrubava a requisição inteira mesmo havendo quatro tentativas
             // sobrando no laço.
             const [respostaDieta, respostaTreino] = await Promise.allSettled([
                 pedidoDieta,

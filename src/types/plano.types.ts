@@ -231,7 +231,7 @@ export interface ConferenciaDTO {
     };
     /**
      * Quantas vezes o plano foi gerado até chegar a este resultado — 1 quando
-     * fechou de primeira, até 3 quando o gerador precisou pedir de novo.
+     * fechou de primeira, até 5 quando o gerador precisou pedir de novo.
      *
      * Sobe até o app de propósito: é o que permite MEDIR com que frequência o
      * retry dispara em uso real, sem depender de ler log de servidor. É essa

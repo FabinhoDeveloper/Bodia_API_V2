@@ -598,14 +598,14 @@ O gerador erra de duas maneiras, e cada uma tem o seu laço:
 
 | O que deu errado | Quem detecta | Laço |
 |---|---|---|
-| O plano fechou fora da tolerância de macros ou de volume | `ValidadorMacros`, `ValidadorVolume` | **do plano**, em `PlanoIaGenerator.gerar` — 3 tentativas |
+| O plano fechou fora da tolerância de macros ou de volume | `ValidadorMacros`, `ValidadorVolume` | **do plano**, em `PlanoIaGenerator.gerar` — 5 tentativas |
 | Uma refeição saiu impossível de montar (sem proteína, sem base de carboidrato, sem alimento nenhum) | `DietaIaGenerator.conferir` | **da refeição**, em `DietaIaGenerator.reparar` — 2 reparos |
 
 O segundo é mais novo, e por um tempo não existiu: as conferências de cobertura eram `throw`, e um almoço sem fonte de proteína — erro de UMA refeição, que o modelo conserta quando avisado — derrubava a geração inteira com um 500, mesmo com o laço do plano de pé logo acima. O comentário de `exigirCobertura` já dizia o certo (*"o problema é da SELEÇÃO, e é ela que precisa ser refeita"*); faltava alguém refazê-la.
 
 ### O retry do PLANO: viu que errou, pede de novo
 
-Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **3 tentativas** (uma mais duas).
+Até aqui o desvio era medido, reportado e ignorado — o plano ia para o banco fora da tolerância. `PlanoIaGenerator.gerar` agora laça, até **5 tentativas** (uma mais quatro). Já foram 3; subiu porque o plano ainda saía fora da tolerância com frequência, e cada volta extra costuma custar só a seleção da dieta (~2,5 s). Não há teto de tempo no laço: um modelo que estoura o timeout em toda volta passa dos 210 s do app — risco que já existia com 3.
 
 O que é regerado é a **SELEÇÃO**, não as porções. Com o `PorcoesSolver` as gramas já são as melhores possíveis para os alimentos escolhidos: o que sobrou de desvio é responsabilidade de QUAIS alimentos entraram, e é a única alavanca que outra chamada pode mover. Pedir as gramas de novo não teria o que melhorar.
 
@@ -701,7 +701,7 @@ Como ler: as trilhas rodam em **paralelo, como em produção**, então `total_ms
 
 O resultado contraria a intuição de que a seleção de alimentos seria o gargalo por ser o maior prompt (~17k caracteres): ela é a etapa **mais rápida** (2–3,6 s). Quem domina é o treino, e no `gpt-5` por causa dos tokens de raciocínio. Se o `gpt-5` for necessário por qualidade, é o `treino.prompt` que precisa encolher.
 
-**O retry cabe no orçamento, e isso foi medido.** Com o laço de 3 tentativas, dois perfis reais em `gpt-5`, ambos esgotando as três:
+**O retry cabe no orçamento, e isso foi medido — com 3 tentativas.** O teto hoje é 5 e ainda não foi remedido: pela tabela abaixo, as duas voltas a mais somam ~5 s e levam o pior caso típico a ~14,5–16,5 s, na borda do RNF02. Dois perfis reais em `gpt-5`, ambos esgotando as três:
 
 | perfil | total | tentativa 1 | tentativas 2 e 3 |
 |---|---|---|---|
@@ -843,7 +843,7 @@ Limitação assumida: quem estiver em Manaus (−4), no Acre (−5) ou viajando 
 
 - **A proteína a 1,7 g/kg é o que ainda separa o prato de uma prescrição.** Com a tabela de repartição, o retry e o solver, uma geração real fecha caloria, carboidrato e gordura em torno de 1–7%, mas a proteína teima em **+9%** no perfil feminino: um prato brasileiro com uma porção normal de carne entrega mais proteína do que 1,7 g/kg reparte para o almoço. Medido, **2,0 g/kg** — topo da faixa 1,4–2,0 de Stokes et al. 2018, a mesma fonte já citada — fecha os quatro alvos nos dois perfis E leva a razão arroz:carne de 3,0:1 para 1,67:1. A dose ficou em 1,7 por decisão de produto; subir é uma linha em `PROTEINA_G_POR_KG`.
 - **A gordura travada em 25%** (`GORDURA_PERCENTUAL_KCAL`) é a outra metade da mesma conta: o carboidrato é o RESÍDUO, então 25% de gordura o mantém alto e o arroz no teto. Subir para 30% (faixa 20–35%, Jäger et al. 2017) derruba o carboidrato de 398 para 356 g/dia no perfil masculino. Também decisão de nutrição, também deixada em aberto.
-- **O retry esgota as três tentativas nos dois perfis medidos.** Isso diz que o desvio residual é da META, não da seleção — nenhuma escolha de alimento fecha o que as duas linhas acima mantêm aberto. Enquanto for assim, o retry está pagando ~5 s e duas chamadas por uma melhora pequena; se as metas forem corrigidas, ele deve passar a disparar raramente. Vale remedir `conferencia.tentativas` depois de qualquer mexida nelas.
+- **O retry esgotava as três tentativas nos dois perfis medidos** (medição de antes do teto subir para 5 — remedir tempo e se as voltas 4 e 5 mudam a melhor tentativa). Isso diz que o desvio residual é da META, não da seleção — nenhuma escolha de alimento fecha o que as duas linhas acima mantêm aberto. Enquanto for assim, o retry está pagando ~5 s e duas chamadas por uma melhora pequena; se as metas forem corrigidas, ele deve passar a disparar raramente. Vale remedir `conferencia.tentativas` depois de qualquer mexida nelas.
 - **O fixture não passa pelo solver.** `SIMULAR_IA=true` devolve `data/plano-simulado.ts` com gramas fixas e quatro refeições, independentemente do perfil — limitação já documentada no próprio arquivo, mas que agora significa que o caminho padrão de desenvolvimento não exercita as porções.
 - **Remedir o `bench-modelo.ts`.** A tabela dele (`gpt-4o-mini` 6,6 s, `gpt-5` 22,5 s) é de quando a geração eram três chamadas em sequência; medido agora com duas chamadas mais o retry, o `gpt-5` fecha em 9,5–11,5 s. O veredito "gpt-5 não atende o RNF02" **caiu**, mas o script ainda não foi rodado de novo para a comparação entre modelos ficar honesta. O gargalo continua sendo a trilha do TREINO, por causa dos tokens de raciocínio: se sobrar tempo a cortar, é o `treino.prompt` que precisa encolher — não a seleção de alimentos, que é o maior prompt mas a etapa mais rápida.
 - **O split ainda ignora o nível de experiência.** `SPLIT_POR_DIAS` é indexado só por `diasPorSemana`: um iniciante que escolhe 6 dias recebe PPLx2 exatamente como um avançado. A seleção de exercício já respeita o nível (ver "O catálogo do iniciante não tem agachamento livre"); a estrutura da semana, não.

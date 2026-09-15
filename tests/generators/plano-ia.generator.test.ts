@@ -326,7 +326,7 @@ describe("PlanoIaGenerator", () => {
 
         // JSON quebrado continua sendo exceção: não diz qual refeição consertar,
         // então não há pedido estreito a fazer. Quem trata é o laço de fora, que
-        // gasta as três tentativas antes de desistir.
+        // gasta as cinco tentativas antes de desistir.
         it("falha com mensagem própria quando a seleção não é json", async () => {
             const { planoIaGenerator } = criarGerador({
                 ...RESPOSTAS_OK,
@@ -430,9 +430,9 @@ describe("PlanoIaGenerator", () => {
 
             const { tentativas } = await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            expect(tentativas).toBe(3);
-            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
-            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(3);
+            expect(tentativas).toBe(5);
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(5);
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(5);
         });
 
         // Refazer as duas trilhas gastaria uma chamada à toa e ainda arriscaria
@@ -446,7 +446,7 @@ describe("PlanoIaGenerator", () => {
             await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
             expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(1);
-            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(3);
+            expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(5);
         });
 
         it("refaz só a dieta quando apenas os macros falham", async () => {
@@ -457,7 +457,7 @@ describe("PlanoIaGenerator", () => {
 
             await planoIaGenerator.gerar(PERFIL_PLANO, resultado);
 
-            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(5);
             expect(etapasDe(aiService).filter((e) => e === "treino")).toHaveLength(1);
         });
 
@@ -496,7 +496,7 @@ describe("PlanoIaGenerator", () => {
          * Uma trilha que LANÇA gasta uma tentativa, em vez de matar a geração.
          * É o que cobre resposta vazia, JSON quebrado e timeout do modelo: até
          * então uma única falha transitória derrubava a requisição inteira,
-         * mesmo com duas tentativas sobrando no laço.
+         * mesmo com quatro tentativas sobrando no laço.
          */
         it("gasta uma tentativa quando uma trilha falha, e tenta de novo", async () => {
             let chamadas = 0;
@@ -534,7 +534,7 @@ describe("PlanoIaGenerator", () => {
             await expect(planoIaGenerator.gerar(PERFIL_PLANO, resultado)).rejects.toThrow(
                 "IA fora do ar",
             );
-            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(3);
+            expect(etapasDe(aiService).filter((e) => e === "dieta:seleção")).toHaveLength(5);
         });
     });
 
